@@ -1,0 +1,6 @@
+test_user_service_preserves_codex_proxy (test_cli.CliTests.test_user_service_preserves_codex_proxy) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 0.004s
+
+OK

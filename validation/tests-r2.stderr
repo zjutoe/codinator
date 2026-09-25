@@ -1,0 +1,36 @@
+test_bad_review_exit_or_digest_or_concurrent_mutation_never_accepts (test_engine.EngineTests.test_bad_review_exit_or_digest_or_concurrent_mutation_never_accepts) ... ok
+test_complete_acceptance_evidence_and_no_git_commit (test_engine.EngineTests.test_complete_acceptance_evidence_and_no_git_commit) ... ok
+test_failed_required_check_does_not_accept (test_engine.EngineTests.test_failed_required_check_does_not_accept) ... ok
+test_notification_failure_does_not_rollback_acceptance (test_engine.EngineTests.test_notification_failure_does_not_rollback_acceptance) ... ok
+test_pause_before_dispatch (test_engine.EngineTests.test_pause_before_dispatch) ... ok
+test_recovery_does_not_adopt_review_mutations (test_engine.EngineTests.test_recovery_does_not_adopt_review_mutations) ... ok
+test_recovery_marks_uncertain_without_replaying (test_engine.EngineTests.test_recovery_marks_uncertain_without_replaying) ... ok
+test_rework_is_automatic_and_preserves_prior_attempt (test_engine.EngineTests.test_rework_is_automatic_and_preserves_prior_attempt) ... ok
+test_scope_failure_never_reviews (test_engine.EngineTests.test_scope_failure_never_reviews) ... ok
+test_terminal_state_and_outbox_are_atomic (test_engine.EngineTests.test_terminal_state_and_outbox_are_atomic) ... ok
+test_truncated_or_missing_delivery_never_reviews (test_engine.EngineTests.test_truncated_or_missing_delivery_never_reviews) ... ok
+test_two_rounds_without_progress_stop (test_engine.EngineTests.test_two_rounds_without_progress_stop) ... ok
+test_allowed_directory_cannot_contain_exclusion (test_files.FilesTests.test_allowed_directory_cannot_contain_exclusion) ... ok
+test_empty_directory_scope_and_implicit_parent (test_files.FilesTests.test_empty_directory_scope_and_implicit_parent) ... ok
+test_existing_corrupted_blob_is_not_trusted (test_files.FilesTests.test_existing_corrupted_blob_is_not_trusted) ... ok
+test_git_index_changes_are_rejected (test_files.FilesTests.test_git_index_changes_are_rejected) ... ok
+test_json_artifacts_never_replaced (test_files.FilesTests.test_json_artifacts_never_replaced) ... ok
+test_lock_prevents_second_controller (test_files.FilesTests.test_lock_prevents_second_controller) ... ok
+test_manifest_rejects_scope_escape_and_contract_write (test_files.FilesTests.test_manifest_rejects_scope_escape_and_contract_write) ... ok
+test_snapshot_untracked_binary_mode_delete_symlink (test_files.FilesTests.test_snapshot_untracked_binary_mode_delete_symlink) ... ok
+test_tracked_file_cannot_be_excluded (test_files.FilesTests.test_tracked_file_cannot_be_excluded) ... ok
+test_large_stderr_drained_and_nonzero_recorded (test_process.ProcessTests.test_large_stderr_drained_and_nonzero_recorded) ... ok
+test_orphan_child_killed_before_leader_reaped (test_process.ProcessTests.test_orphan_child_killed_before_leader_reaped) ... ok
+test_timeout_and_cancel_leave_results (test_process.ProcessTests.test_timeout_and_cancel_leave_results) ... ok
+test_ack_and_agent_end_are_not_completion (test_protocol.ProtocolTests.test_ack_and_agent_end_are_not_completion) ... ok
+test_duplicate_state_does_not_resend (test_protocol.ProtocolTests.test_duplicate_state_does_not_resend) ... ok
+test_failure_or_truncation_never_accepted (test_protocol.ProtocolTests.test_failure_or_truncation_never_accepted) ... ok
+test_interactive_confirm_is_not_auto_approved (test_protocol.ProtocolTests.test_interactive_confirm_is_not_auto_approved) ... ok
+test_model_mismatch_no_prompt (test_protocol.ProtocolTests.test_model_mismatch_no_prompt) ... ok
+test_retry_then_settled_success (test_protocol.ProtocolTests.test_retry_then_settled_success) ... ok
+test_verdict_strict_binding (test_protocol.ProtocolTests.test_verdict_strict_binding) ... ok
+
+----------------------------------------------------------------------
+Ran 31 tests in 34.564s
+
+OK

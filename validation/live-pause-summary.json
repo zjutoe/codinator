@@ -1,0 +1,21 @@
+{
+  "evidence_root": "/home/mye/data/codidator-live-_fn0my19",
+  "state": {
+    "state": "paused",
+    "phase": "stopped",
+    "reason": "Pause/cancel requested",
+    "round": 1,
+    "attempt": 1,
+    "pid": null,
+    "pid_start": null
+  },
+  "runtime_identity": {
+    "provider": "bonsai",
+    "model": "bonsai2-27b",
+    "thinking": "xhigh",
+    "session_id": "01a0d90f-fc24-705b-a5a4-0ff5734abd54",
+    "source": "Pi RPC get_state; client runtime identity, not server-weight attestation"
+  },
+  "user_direction": "Another Pi task is using Bonsai. Wait for it to finish before integration testing. Continue bonsai2-27b.",
+  "scope": "Full live loop incomplete; no acceptance claimed; other task left running."
+}

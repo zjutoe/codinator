@@ -1,0 +1,34 @@
+{
+  "source": "/home/mye/data/codidator-review-live-dmhasr5p",
+  "adapter_outcome_original": {
+    "verdict": "integration_failure",
+    "reason": "Codex did not emit a successful turn completion",
+    "evidence_root": "/home/mye/data/codidator-review-live-dmhasr5p"
+  },
+  "process_exit_code": 0,
+  "process_elapsed_seconds": 250.46498608589172,
+  "terminal_events": [
+    {
+      "type": "error",
+      "message": "Reconnecting... 2/5 (request timed out)"
+    },
+    {
+      "type": "turn.completed",
+      "usage": {
+        "input_tokens": 114659,
+        "cached_input_tokens": 90752,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 2897,
+        "reasoning_output_tokens": 779
+      }
+    }
+  ],
+  "codex_verdict": {
+    "task_id": "review-smoke",
+    "submission_digest": "f1b055774e72726b2741abb65b994b1f91d9517765698c4944152cc20e7d265e",
+    "verdict": "accepted",
+    "summary": "Source inspection and 1,000 isolated calls confirm answer() returns exact int 42 without I/O, dependencies, or global state. Files match submission hashes; requirements are unchanged. No controller checks or required test commands were supplied. No unresolved issues.",
+    "issues": []
+  },
+  "note": "Original adapter falsely rejected an earlier reconnect diagnostic; original evidence preserved. Fix and regression test are in tests-r5."
+}

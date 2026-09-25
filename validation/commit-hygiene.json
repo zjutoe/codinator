@@ -1,0 +1,52 @@
+{
+  "changes": [
+    {
+      "path": ".gitignore",
+      "before_sha256": "aeea1bfb14b7b55b8e73adb15273874c19840ed1793d9e6fb65a4c84ff03066d",
+      "after_sha256": "47bebde7a86f942df41dafbaaece77e8741d320ff64e3d39a1c76d0c990cba9a",
+      "change": "remove blank lines at EOF only"
+    },
+    {
+      "path": "pyproject.toml",
+      "before_sha256": "b48b23a9b555d01b688bb9b157d9810ddec329c14035a77f6f3652f40e7148f9",
+      "after_sha256": "91d414adfeded7130aebb263a76cbc8195147c399857b30f95bbb0f5dfab2a81",
+      "change": "remove blank lines at EOF only"
+    },
+    {
+      "path": "src/codidator/__init__.py",
+      "before_sha256": "faea724e1243c5940ae04dcabd7a429911b7abe2da9970500bce3998559c336d",
+      "after_sha256": "2258711ebca3abaf6482f73285df25015ef62c4be8443b90183d326dedda931c",
+      "change": "remove blank lines at EOF only",
+      "python_ast_equal": true
+    },
+    {
+      "path": "src/codidator/__main__.py",
+      "before_sha256": "76fa916e93e0ae1a6c1bb51dcc0bcf289c014e9f760a47165f8a84401ccf41d7",
+      "after_sha256": "935a1c1166b0c1ea35a82256345000bf2c73ded718d77773bc27a71ecce28f7d",
+      "change": "remove blank lines at EOF only",
+      "python_ast_equal": true
+    },
+    {
+      "path": "tests/test_files.py",
+      "before_sha256": "6f2e0cf8bf24b6306997ae972fe1ed14e774e255a4a5cc1588c51cac6d4024f5",
+      "after_sha256": "8fba696c6b97025e84a9cf5779b1e002aa7b2169319e4a57717732a4d8a4f4e0",
+      "change": "remove blank lines at EOF only",
+      "python_ast_equal": true
+    },
+    {
+      "path": "tests/test_process.py",
+      "before_sha256": "c9507dc6595568929a46213e177e839eb46a83958cc8bc97a8a6c492c47118f5",
+      "after_sha256": "9ed3ad4f91ed3b543dcd7a5f9ac0e528c79b9d766f07b2e95e02376a6f182dab",
+      "change": "remove blank lines at EOF only",
+      "python_ast_equal": true
+    },
+    {
+      "path": "tests/test_sandbox.py",
+      "before_sha256": "dc9856457c935e047a9339eeab6b53ad965ea4e9f4698d63634965737aa58dcf",
+      "after_sha256": "db7996a68709b7529bcd3d7d30446c8848c2e7b1141fd787c74bcc38ca869f38",
+      "change": "remove blank lines at EOF only",
+      "python_ast_equal": true
+    }
+  ],
+  "tests": "Existing 38-test result retained; no behavioral change and no model calls."
+}

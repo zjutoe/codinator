@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "id": "demo-add",
+  "workspace": "/absolute/path/to/a/dedicated/git/worktree",
+  "handoff": "docs/handoffs/demo-add.md",
+  "allowed_paths": ["add.py", "tests/test_add.py"],
+  "checks": [
+    {"name": "unit", "argv": ["python3", "-m", "unittest", "discover", "-s", "tests", "-v"], "timeout_seconds": 120}
+  ],
+  "excludes": [".venv/", ".pytest_cache/"],
+  "max_rounds": 4,
+  "max_seconds": 14400,
+  "attempt_seconds": 3600
+}

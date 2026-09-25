@@ -1,0 +1,19 @@
+{
+  "src/codidator/__init__.py": "faea724e1243c5940ae04dcabd7a429911b7abe2da9970500bce3998559c336d",
+  "src/codidator/__main__.py": "76fa916e93e0ae1a6c1bb51dcc0bcf289c014e9f760a47165f8a84401ccf41d7",
+  "src/codidator/agents.py": "5785351aeb4176af472c485377001d45b9f545c973a619bfe572c0552cc8eace",
+  "src/codidator/cli.py": "cc8a3b78b87d0bc6fa49e2d13a0d8e1cdfc6232616458cd47ea449fba00dc31c",
+  "src/codidator/config.py": "93bed9f19f81f215e492cbf31f3b755375a28e28726cebd79b217808529611f6",
+  "src/codidator/engine.py": "b24c3aef306422ec3418b230fbd468c40306495d5209139f6cd60370f3ee0550",
+  "src/codidator/files.py": "f6cea7cda8e3e56ead20318f849a8a557fbfeb85c9a96e9ef30fb98022454424",
+  "src/codidator/process.py": "5e4d37b764856c1a4254a024b25f5cd3680c2c92961b5ab65e96ec01ffaf18d6",
+  "src/codidator/sandbox.py": "10070e4cbc3092fdb604c7563ccf577cf2c4b5eb6864d34e0c39998723f1cce7",
+  "src/codidator/store.py": "3be3a0130326b3b761024c1e24b25a920fcb0aa121b1f6d5ce96bbf1a946a657",
+  "tests/fake_agent.py": "3b17978a8b6be5e2bef18661e639053e133f5a92d465a8833e9c17e91fa5f620",
+  "tests/test_cli.py": "e3cbbb011088dd2fdf5126e7067fe584bfa4fda91fe240e76c906d7357ce8641",
+  "tests/test_engine.py": "2a22061aa77018ca8920b9dcec5ff2242702d593bb359a1c588d1f96f4967d01",
+  "tests/test_files.py": "6f2e0cf8bf24b6306997ae972fe1ed14e774e255a4a5cc1588c51cac6d4024f5",
+  "tests/test_process.py": "c9507dc6595568929a46213e177e839eb46a83958cc8bc97a8a6c492c47118f5",
+  "tests/test_protocol.py": "be4951332debad4a76d21f1ce055f65f9737fccd409c9eee02ba541ece1ce081",
+  "tests/test_sandbox.py": "dc9856457c935e047a9339eeab6b53ad965ea4e9f4698d63634965737aa58dcf"
+}
