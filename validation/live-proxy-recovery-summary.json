@@ -1,0 +1,100 @@
+{
+  "date": "2026-09-26",
+  "task_id": "live-smoke",
+  "state_root": "/home/mye/data/codidator-live-_fn0my19/state",
+  "recovery": "Explicit HTTP/HTTPS proxy environment for the controller; Pi strips proxy variables and remains direct. Original artifacts unchanged; new attempt used.",
+  "attempts": [
+    {
+      "attempt": 2,
+      "stages": {
+        "pi": {
+          "exit_code": 0,
+          "failure": null,
+          "elapsed_seconds": 32.41505479812622,
+          "timeout_seconds": 1200
+        },
+        "checks/unit": {
+          "exit_code": 0,
+          "failure": null,
+          "elapsed_seconds": 0.06817746162414551,
+          "timeout_seconds": 30
+        },
+        "codex": {
+          "exit_code": null,
+          "failure": "Problem: Process exceeded wall-clock budget",
+          "elapsed_seconds": 1202.1626851558685,
+          "timeout_seconds": 1200
+        }
+      },
+      "codex_turn_completed": false,
+      "codex_turn_failed": false,
+      "reconnect_diagnostics": [
+        "Reconnecting... 2/5 (request timed out)",
+        "Reconnecting... 3/5 (stream disconnected before completion: Network unreachable (os error 101))",
+        "Reconnecting... 4/5 (request timed out)",
+        "Reconnecting... 5/5 (request timed out)",
+        "Reconnecting... waiting for network (Connection failed: error sending request)",
+        "Reconnecting... waiting for network (Connection failed: error sending request)",
+        "Reconnecting... waiting for network (Connection failed: error sending request)",
+        "Reconnecting... waiting for network (Connection failed: error sending request)",
+        "Reconnecting... waiting for network (Connection failed: error sending request)",
+        "Reconnecting... waiting for network (Connection failed: error sending request)"
+      ]
+    },
+    {
+      "attempt": 3,
+      "stages": {
+        "pi": {
+          "exit_code": 0,
+          "failure": null,
+          "elapsed_seconds": 33.05751132965088,
+          "timeout_seconds": 1200
+        },
+        "checks/unit": {
+          "exit_code": 0,
+          "failure": null,
+          "elapsed_seconds": 0.06851601600646973,
+          "timeout_seconds": 30
+        },
+        "codex": {
+          "exit_code": 0,
+          "failure": null,
+          "elapsed_seconds": 281.77660489082336,
+          "timeout_seconds": 1200
+        }
+      },
+      "codex_turn_completed": true,
+      "codex_turn_failed": false,
+      "reconnect_diagnostics": [
+        "Reconnecting... 2/5 (request timed out)",
+        "Reconnecting... 3/5 (request timed out)",
+        "Reconnecting... 4/5 (request timed out)"
+      ],
+      "pi_runtime": {
+        "provider": "bonsai",
+        "model": "bonsai2-27b",
+        "thinking": "xhigh",
+        "source": "Pi RPC get_state; client runtime identity, not server-weight attestation"
+      },
+      "verdict": {
+        "task_id": "live-smoke",
+        "submission_digest": "296ef04b853b6f5d79b8f78e04380e04946d48cca53980325bad3c912e9b51c2",
+        "verdict": "accepted",
+        "summary": "Source satisfies the contract without changes. Submission hashes and unchanged oracle verified. Required controller check and independent rerun passed, along with 144 integer-boundary and 48 invalid-type probes. No IO, mutable global state, or unresolved issues found.",
+        "issues": []
+      },
+      "controller_checks_stderr": "test_types (test_arithmetic.ArithmeticTests.test_types) ... ok\ntest_values (test_arithmetic.ArithmeticTests.test_values) ... ok\n\n----------------------------------------------------------------------\nRan 2 tests in 0.000s\n\nOK\n"
+    }
+  ],
+  "final_state": {
+    "state": "accepted",
+    "phase": "done",
+    "attempt": 3,
+    "active_pid": null
+  },
+  "limits": [
+    "Original attempt did not record proxy environment, so absent/misconfigured proxy versus transient failure is not established.",
+    "This is one successful tiny real-model end-to-end task, not KMesh integration or a reliability benchmark.",
+    "No real thread notification was requested/tested; no source changes, commit or push in this recovery."
+  ]
+}

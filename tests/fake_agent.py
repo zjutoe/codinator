@@ -53,6 +53,9 @@ else:
     task_id = re.search(r'reviewer for task (.+?)\.', prompt)[1]
     fingerprint = re.search(r'Exact submission digest: (\w+)', prompt)[1]
     result_path = Path(sys.argv[sys.argv.index('--output-last-message') + 1])
+    if MODE == 'codex-unavailable':
+        emit({'type': 'turn.failed', 'error': {'message': 'fixture: usage limit'}})
+        sys.exit(9)
     first = result_path.parent.parent.name == 'attempt-0001'
     needs = MODE == 'no-progress' or (MODE == 'rework' and first)
     result = {'task_id': task_id, 'submission_digest': fingerprint, 'verdict': 'needs_changes' if needs else 'accepted',

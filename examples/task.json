@@ -10,5 +10,5 @@
   "excludes": [".venv/", ".pytest_cache/"],
   "max_rounds": 4,
   "max_seconds": 14400,
-  "attempt_seconds": 3600
+  "attempt_seconds": 7200
 }

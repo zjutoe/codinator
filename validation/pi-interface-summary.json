@@ -1,0 +1,37 @@
+{
+  "result": "PASS",
+  "feature": "Native Pi interface with automatic submission, independent Codex review and rework",
+  "evidence_root": "/home/mye/data/codidator-pi-ui-validation",
+  "verification": {
+    "initial_python_regression": "79 tests passed; full-r1.json",
+    "after_corrections_backend": "18 tests passed; backend-r2.json",
+    "extension": "8 tests passed; extension-r4.stdout",
+    "native_ui": "native-ui-r2/result.json: real Pi, paused task, no model prompts, TTY restored",
+    "native_automatic_loop": "native-loop-r2/result.json: real Pi+PTY+bwrap, scripted HTTP/Codex fixtures, needs_changes then accepted, 4 fixture requests, 2 session snapshots",
+    "independent_review": "reviewer-verdict-r2.json: PASS, four findings closed, accepted hashes pinned"
+  },
+  "real_models_called": false,
+  "limits": [
+    "No fresh real Bonsai/Codex end-to-end call; T0017 remains active and unmodified.",
+    "Normal rounds require no confirmation; authority/resource failures and round limits pause explicitly.",
+    "No automatic commit/push/merge; no legacy service restart."
+  ],
+  "preserved_failures": [
+    "backend-r1 socket binding rejected by tool sandbox; escalated checks passed",
+    "native-ui-r1 incorrect expectation that no-model session creates JSONL; Pi persists after first assistant",
+    "native-loop-r1 fixture omitted thinkingLevelMap; identity check correctly paused high instead of xhigh",
+    "reviewer initial four faults retained with reproductions"
+  ],
+  "accepted_hashes": {
+    "README.md": "884a41c0d6acbb76aed55ff72264fc884fa6c55ae7916d1d2ba4f7387abbdf88",
+    "pyproject.toml": "30ff5b7aefc078200749987430ae7a5dd0aeb3103d9d06bfa20b60680e59ae33",
+    "tests/test_interactive.py": "3cfade841f1079a93bc05f177beb1fd551c5b7967a0cd2d52766b4fac6366d0d",
+    "tests/pi_extension.test.mjs": "17518a072c6a2fcf788972f893d54b8dec9453c9e3f467c45b7e257875e1420e",
+    "docs/pi-interface.md": "48e9ecaff78764d1daaa25e329c9d49238eb65382154364a0602994bfd36c4e7",
+    "src/codidator/cli.py": "086a123fe0bb904a2783ba237d1da8224dfd8330bacced82f93d7baedfea1537",
+    "src/codidator/interactive.py": "97c7269969d9aa020842b796a2cc5dff242cc76675311bad6f7d8dbae59674dd",
+    "src/codidator/pi_extension.mjs": "37ad3537118a7b8f9ddbbdc128fa6ba5d8818894d1d8817e958f1a83a37b356e",
+    "src/codidator/foreground.py": "d05805e0d1ed20e38a7c576ebf4a395a53dd6c727f14648b916cf008017b0d8e"
+  },
+  "independent_record_sha256": "385f176b364a52eb09878badb84c83e7f78ab29bd389c134444a5692bdc4ecf9"
+}

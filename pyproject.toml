@@ -14,3 +14,6 @@ codidator = "codidator.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+codidator = ["pi_extension.mjs"]

@@ -42,11 +42,16 @@ def main(argv=None):
     sub = parser.add_subparsers(dest='command', required=True)
     p = sub.add_parser('submit', help='Publish an explicit immutable manifest')
     p.add_argument('manifest')
+    p = sub.add_parser('pi', help='Native Pi interface with automatic independent Codex review/rework')
+    p.add_argument('target', help='Manifest path for a new task, or existing interactive task ID')
+    p.add_argument('--resume', action='store_true', help='Explicitly resume a paused interactive task')
     for name in ('run', 'status', 'pause', 'cancel', 'resume'):
         p = sub.add_parser(name)
         p.add_argument('task', nargs='?' if name == 'status' else None)
         if name == 'resume':
             p.add_argument('--extra-seconds', type=int, default=0)
+            p.add_argument('--attempt-seconds', type=int, help='Override each Pi/Codex process timeout for this task; original manifest remains unchanged')
+            p.add_argument('--review-only', action='store_true', help='Retry only an unfinished review of the unchanged checked submission')
     sub.add_parser('serve', help='Process queued tasks serially; suitable for a user systemd service')
     sub.add_parser('recover', help='Stop and mark interrupted attempts; never replay prompts')
     sub.add_parser('notify', help='Retry pending explicitly configured Codex notifications')
@@ -54,6 +59,9 @@ def main(argv=None):
     sub.add_parser('service', help='Print a user service unit; does not install/enable it')
     args = parser.parse_args(argv)
     try:
+        if args.command == 'pi':
+            from .foreground import launch
+            return launch(args.state_dir, args.target, resume=args.resume, pi_bin=args.pi_bin, codex_bin=args.codex_bin)
         if args.command == 'service':
             exe = shutil.which('codidator') or str(Path(sys.executable).parent / 'codidator')
             state = str(Path(args.state_dir).expanduser().resolve())
@@ -75,7 +83,9 @@ def main(argv=None):
         if args.command == 'status':
             tasks = [store.get(args.task)] if args.task else store.tasks()
             keys = ('id', 'state', 'phase', 'round', 'attempt', 'reason', 'deadline')
-            print(json.dumps([{k: t[k] for k in keys} for t in tasks], ensure_ascii=False, indent=2))
+            print(json.dumps([{k: t[k] for k in keys} | {
+                'attempt_seconds': t['attempt_seconds_override'] if t['attempt_seconds_override'] is not None else t['manifest']['attempt_seconds']
+            } for t in tasks], ensure_ascii=False, indent=2))
             return 0
         if args.command in ('pause', 'cancel'):
             task = store.get(args.task)
@@ -106,8 +116,10 @@ def main(argv=None):
         elif args.command == 'resume':
             if args.extra_seconds < 0:
                 raise Problem('--extra-seconds must be non-negative')
-            engine.resume(args.task, args.extra_seconds)
-            print('ready:', args.task)
+            if args.attempt_seconds is not None and args.attempt_seconds <= 0:
+                raise Problem('--attempt-seconds must be positive')
+            engine.resume(args.task, args.extra_seconds, review_only=args.review_only, attempt_seconds=args.attempt_seconds)
+            print('review_ready:' if args.review_only else 'ready:', args.task)
         elif args.command == 'recover':
             with lock(store.root / 'controller.lock'):
                 engine.recover()
@@ -126,7 +138,7 @@ def main(argv=None):
                     engine.recover()
                 while True:
                     for task in store.tasks():
-                        if task['state'] in ('ready', 'needs_changes'):
+                        if task['state'] in ('ready', 'review_ready', 'needs_changes'):
                             engine.run(task['id'])
                     notifications(store, args.codex_bin)
                     time.sleep(3)

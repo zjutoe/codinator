@@ -1,0 +1,38 @@
+{
+  "deployed_at_utc": "2026-09-27T02:39:44.082926+00:00",
+  "files": {
+    "README.md": "822aede9b2e0be908e64537154d50f494d7e37958df3cfa3caa5050a919808ef",
+    "examples/task.json": "e412a2316edbe932eea50f77c84b14114d7c922d659d45729ca322f1c4e3341b",
+    "src/codidator/config.py": "fa23f2a572e037085fb456e94037ac1fa551e9220e16b53559f127805bedc109",
+    "src/codidator/engine.py": "538bbc8ae051cac1c3e0c5afb659056a5ecb6ebc64d38b22a65eca6c532c4acb",
+    "src/codidator/store.py": "05357183e56743f0f109da25c380c693a91b467618bb4740d00dadf2477c1794",
+    "src/codidator/cli.py": "00987497ddc19676cf147f48aee2cba0a9865f9d51a79851d1ca3de614c6c2a1",
+    "tests/test_cli.py": "41b0aeb095729f4c014678bbb996f83030b491dbc8890e733848349031181813",
+    "tests/test_engine.py": "8d0077e53402e928bf2a206592ba59290bb1db80d3fca2a59e5a6ea579a7b8e4"
+  },
+  "prior_uncommitted_review_only_changes_preserved": true,
+  "default_attempt_seconds": 7200,
+  "resume_override": "--attempt-seconds",
+  "validation": {
+    "full_fake_tests": 65,
+    "final_affected_tests": 9,
+    "independent_review": {
+      "verdict": "PASS",
+      "reviewer": "/root/review_automation_design",
+      "record": "/home/mye/data/codidator-timeout-validation/reviewer-accepted-r2.json",
+      "accepted_hashes": {
+        "README.md": "822aede9b2e0be908e64537154d50f494d7e37958df3cfa3caa5050a919808ef",
+        "examples/task.json": "e412a2316edbe932eea50f77c84b14114d7c922d659d45729ca322f1c4e3341b",
+        "src/codidator/config.py": "fa23f2a572e037085fb456e94037ac1fa551e9220e16b53559f127805bedc109",
+        "src/codidator/engine.py": "538bbc8ae051cac1c3e0c5afb659056a5ecb6ebc64d38b22a65eca6c532c4acb",
+        "src/codidator/store.py": "05357183e56743f0f109da25c380c693a91b467618bb4740d00dadf2477c1794",
+        "src/codidator/cli.py": "00987497ddc19676cf147f48aee2cba0a9865f9d51a79851d1ca3de614c6c2a1",
+        "tests/test_cli.py": "41b0aeb095729f4c014678bbb996f83030b491dbc8890e733848349031181813",
+        "tests/test_engine.py": "8d0077e53402e928bf2a206592ba59290bb1db80d3fca2a59e5a6ea579a7b8e4"
+      }
+    },
+    "evidence_dir": "/home/mye/data/codidator-timeout-validation"
+  },
+  "live_task_resume": "not yet at deployment time; separately verify runtime state",
+  "commit_push": "not performed"
+}

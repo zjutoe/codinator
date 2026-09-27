@@ -1,4 +1,4 @@
-# 验证记录（2026-09-25）
+# 验证记录（更新至2026-09-26）
 
 ## 本地测试与审查
 
@@ -33,15 +33,24 @@
    原因为 `Pause/cancel requested`，未完成实现/验收。暂停后进程已收尾，记录保留。
    实施模型继续使用 `bonsai2-27b`。脱敏记录见 [live-pause-summary.json](live-pause-summary.json)。
 
-完整真实闭环尚未通过。另一任务结束后，可显式恢复此示例（新 attempt、保留旧记录）：
+2026-09-26追加验证（原失败／暂停记录均保留）：
 
-```bash
-cd ~/src/llm/codidator
-.venv/bin/codidator --state-dir /home/mye/data/codidator-live-_fn0my19/state resume live-smoke --extra-seconds 2400
-.venv/bin/codidator --state-dir /home/mye/data/codidator-live-_fn0my19/state run live-smoke
-```
+5. 同一示例的 `attempt-0002`：Pi 32.42秒正常完成，控制器2项测试通过；Codex没有完成审计，
+   日志反复出现网络不可达／请求超时，约1202秒后被1200秒阶段预算终止。该次启动未录制代理环境，
+   因此不能断言一定缺少代理，也不能把网络失败解释成模型推理太慢。
+6. `attempt-0003`：显式为控制器提供本机HTTP/HTTPS代理环境，并按已有命令恢复为新attempt。
+   Pi仍直连Bonsai，RPC确认 `bonsai / bonsai2-27b / xhigh`；Pi用时33.06秒，控制器2项测试通过；
+   Codex使用原配置 `gpt-6-astra / xhigh`，用时281.78秒，进程exit0、`turn.completed`、
+   摘要匹配的无遗留问题accepted结论齐全。审计包含独立复跑、144个整数边界和48个非法类型探针。
+   SQLite最终为 `accepted / done / attempt=3`，无活动PID。单阶段1200秒上限未变，未修改程序源码。
 
-后台服务使用默认 state 目录，不会自行恢复这个单独目录中的已暂停示例。
+**该微型任务的完整真实闭环现已通过一次。** 本次仍有可恢复重连诊断；不将一次通过推广为稳定性或
+KMesh接入已验证。原始材料在上述state目录；可分享的摘要见
+[live-proxy-recovery-summary.json](live-proxy-recovery-summary.json)。JSONL完成事件的说明见
+[OpenAI Docs非交互模式](https://learn.chatgpt.com/docs/non-interactive-mode)。
+
+前台 `run` 不读取后台unit保存的代理环境。需要代理时使用README的显式环境示例；
+后台默认队列和本示例的独立state目录仍分开。本示例已accepted，无需再resume/run。
 
 没有向真实会话发送测试通知。通知重试、稳定事件 ID、验收/通知原子事务由假 agent
 故障注入测试覆盖；`codex queue` 成功也仅代表入队，不代表用户已读。
@@ -52,4 +61,4 @@ cd ~/src/llm/codidator
 `codidator doctor` 通过。用户级 `codidator.service` 已启用，默认队列为空。
 服务保存本机 Codex 代理，Pi 直连规则在派生进程单独生效。未修改全局模型/代理配置。
 
-KMesh 工作树未被本项目实施或联调修改，未提交或推送代码。
+KMesh 工作树未被本项目实施或联调修改。本次2026-09-26排障仅更新操作说明与脱敏证据，未commit/push。

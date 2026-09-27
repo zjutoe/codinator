@@ -75,7 +75,7 @@ def load_manifest(path):
         if not isinstance(argv, list) or not argv or any(not isinstance(s, str) or not s or "\0" in s for s in argv):
             raise Problem("Check argv must be a nonempty array of nonempty strings, never a shell expression")
         check["timeout_seconds"] = positive(check.get("timeout_seconds", 120), "check timeout")
-    for key, default in (("max_rounds", 4), ("max_seconds", 14400), ("attempt_seconds", 3600)):
+    for key, default in (("max_rounds", 4), ("max_seconds", 14400), ("attempt_seconds", 7200)):
         raw[key] = positive(raw.get(key, default), key)
     if raw.get("notify_thread") is not None and (not isinstance(raw["notify_thread"], str) or not raw["notify_thread"].strip()):
         raise Problem("notify_thread must be a nonempty string")

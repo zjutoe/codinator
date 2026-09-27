@@ -4,10 +4,19 @@ from pathlib import Path
 import time
 
 from .agents import reviewer, worker
+from .config import positive
 from .files import Problem, assert_scope, changes, digest, preserve, snapshot, write_json
 from .process import Interrupted, process_start, run_process, stop_group
+from .review_resume import checkpoint, require_unfinished_review
 from .sandbox import Sandbox
 from .store import lock
+
+
+def _budget_timeout(deadline, limit):
+    remaining = deadline - time.time()
+    if remaining <= 0:
+        raise Problem('Task wall-clock budget exhausted')
+    return min(limit, remaining)
 
 
 class Engine:
@@ -75,14 +84,14 @@ class Engine:
             task = self.store.get(task_id)
             if task['pid']:
                 raise Problem('Previous process exit is unconfirmed; dispatch refused')
-            if task['state'] not in ('ready', 'needs_changes'):
+            if task['state'] not in ('ready', 'review_ready', 'needs_changes'):
                 raise Problem(f"Task is {task['state']}; cannot dispatch")
             repo_lock = Path('/tmp') / f"codidator-{os.getuid()}-{digest(task['manifest']['workspace'])}.lock"
             with lock(repo_lock):
                 self._loop(task_id)
 
     def _loop(self, task_id):
-        while self.store.get(task_id)['state'] in ('ready', 'needs_changes'):
+        while self.store.get(task_id)['state'] in ('ready', 'review_ready', 'needs_changes'):
             task = self.store.get(task_id)
             m = task['manifest']
             if task['control']:
@@ -99,35 +108,58 @@ class Engine:
                 before = snapshot(root, m['excludes'])
                 if digest(before) != task['expected_digest']:
                     raise Problem('Workspace changed outside the recorded attempt; inspect before resuming')
-                self.store.update(task_id, attempt=task['attempt'] + 1, state='implementing', phase='pi', reason='')
+                review_only = task['state'] == 'review_ready'
+                evidence_dir = None
+                if review_only:
+                    if task['review_resume'] is None:
+                        raise Problem('Missing persisted review checkpoint')
+                    require_unfinished_review(self.attempt_path(task))
+                    pinned, evidence_dir = checkpoint(self.store, task, self.sandbox)
+                self.store.update(task_id, attempt=task['attempt'] + 1,
+                                  state='reviewing' if review_only else 'implementing',
+                                  phase='codex' if review_only else 'pi', reason='')
                 task = self.store.get(task_id)
                 attempt = self.attempt_path(task)
                 attempt.mkdir(parents=True, exist_ok=False)
                 write_json(attempt / 'before.json', before)
+                attempt_seconds = task['attempt_seconds_override']
+                if attempt_seconds is None:
+                    attempt_seconds = m['attempt_seconds']
+                write_json(attempt / 'budget.json', {
+                    'attempt_seconds': attempt_seconds,
+                    'source': 'resume_override' if task['attempt_seconds_override'] is not None else 'manifest',
+                    'manifest_attempt_seconds': m['attempt_seconds'],
+                    'attempt_seconds_override': task['attempt_seconds_override'],
+                    'deadline': task['deadline'],
+                })
                 private = self.store.root / 'private' / task_id / attempt.name
                 private.mkdir(parents=True, mode=0o700)
-                timeout = min(m['attempt_seconds'], max(1, task['deadline'] - time.time()))
-                pi_status = worker(task, attempt, private, self.sandbox, self.options(task_id, timeout), self.pi_bin)
-                after = snapshot(root, m['excludes'])
-                write_json(attempt / 'submission.json', after)
-                write_json(attempt / 'diff.json', {'paths': changes(before, after), 'digest': digest(after)})
-                preserve(root, after, self.store.root / 'blobs')
-                assert_scope(before, after, m['allowed_paths'])
-                self.store.update(task_id, expected_digest=digest(after))
-                if pi_status == 'blocked':
-                    raise Problem('Pi reported blocked; read delivery/summary.md')
-                self.store.update(task_id, state='checking', phase='checks')
                 failures = []
-                for check in m['checks']:
-                    try:
-                        check_timeout = min(check['timeout_seconds'], max(0.1, task['deadline'] - time.time()))
-                        argv = self.sandbox.wrap(check['argv'], root)
-                        run_process(argv, cwd=root, env=os.environ | {'PYTHONDONTWRITEBYTECODE': '1', 'PYTEST_DISABLE_PLUGIN_AUTOLOAD': '1'},
-                                    out=attempt / 'checks' / check['name'], **self.options(task_id, check_timeout))
-                    except Interrupted:
-                        raise
-                    except Problem as exc:
-                        failures.append(f"{check['name']}: {exc}")
+                if review_only:
+                    write_json(attempt / 'review-source.json', pinned)
+                    after = before
+                else:
+                    timeout = _budget_timeout(task['deadline'], attempt_seconds)
+                    pi_status = worker(task, attempt, private, self.sandbox, self.options(task_id, timeout), self.pi_bin)
+                    after = snapshot(root, m['excludes'])
+                    write_json(attempt / 'submission.json', after)
+                    write_json(attempt / 'diff.json', {'paths': changes(before, after), 'digest': digest(after)})
+                    preserve(root, after, self.store.root / 'blobs')
+                    assert_scope(before, after, m['allowed_paths'])
+                    self.store.update(task_id, expected_digest=digest(after))
+                    if pi_status == 'blocked':
+                        raise Problem('Pi reported blocked; read delivery/summary.md')
+                    self.store.update(task_id, state='checking', phase='checks')
+                    for check in m['checks']:
+                        check_timeout = _budget_timeout(task['deadline'], check['timeout_seconds'])
+                        try:
+                            argv = self.sandbox.wrap(check['argv'], root)
+                            run_process(argv, cwd=root, env=os.environ | {'PYTHONDONTWRITEBYTECODE': '1', 'PYTEST_DISABLE_PLUGIN_AUTOLOAD': '1'},
+                                        out=attempt / 'checks' / check['name'], **self.options(task_id, check_timeout))
+                        except Interrupted:
+                            raise
+                        except Problem as exc:
+                            failures.append(f"{check['name']}: {exc}")
                 if digest(snapshot(root, m['excludes'])) != digest(after):
                     raise Problem('Workspace changed during verification; submission is invalid')
                 if failures:
@@ -136,11 +168,13 @@ class Engine:
                                'issues': [{'id': 'checks:' + c['name']} for c in m['checks'] if any(f.startswith(c['name'] + ':') for f in failures)]}
                 else:
                     self.store.update(task_id, state='reviewing', phase='codex')
-                    timeout = min(m['attempt_seconds'], max(0.1, task['deadline'] - time.time()))
+                    timeout = _budget_timeout(task['deadline'], attempt_seconds)
                     verdict = reviewer(task, attempt, digest(after), self.options(task_id, timeout), self.codex_bin,
-                                       sandbox=self.sandbox, private=private)
+                                       sandbox=self.sandbox, private=private, evidence_dir=evidence_dir)
                     if digest(snapshot(root, m['excludes'])) != digest(after):
                         raise Problem('Workspace changed during review; rejecting stale verdict')
+                    if review_only:
+                        checkpoint(self.store, task, self.sandbox)
                     feedback = json.dumps(verdict, ensure_ascii=False, indent=2)
                 write_json(attempt / 'outcome.json', verdict)
                 (attempt / 'review.md').write_text(verdict['summary'] + '\n\n' + json.dumps(verdict['issues'], ensure_ascii=False, indent=2) + '\n')
@@ -156,7 +190,7 @@ class Engine:
                 if ids == task['last_issues']:
                     raise Problem('Two consecutive reviews retain the same issue set; ' + feedback)
                 self.store.update(task_id, state='needs_changes', round=task['round'] + 1, phase='queued',
-                                  feedback=feedback, last_issues=ids)
+                                  feedback=feedback, last_issues=ids, review_resume=None)
             except (Problem, OSError, ValueError, KeyboardInterrupt) as exc:
                 current_task = self.store.get(task_id)
                 control = current_task['control']
@@ -177,7 +211,11 @@ class Engine:
                     raise
                 return
 
-    def resume(self, task_id, extra_seconds=0):
+    def resume(self, task_id, extra_seconds=0, *, review_only=False, attempt_seconds=None):
+        if type(extra_seconds) is not int or extra_seconds < 0:
+            raise Problem('--extra-seconds must be a non-negative integer')
+        if attempt_seconds is not None:
+            positive(attempt_seconds, '--attempt-seconds')
         with lock(self.store.root / 'controller.lock'):
             self.recover()
             task = self.store.get(task_id)
@@ -188,8 +226,21 @@ class Engine:
             current = snapshot(Path(task['manifest']['workspace']), task['manifest']['excludes'])
             if digest(current) != task['expected_digest']:
                 raise Problem('Workspace no longer matches the recorded checkpoint; restore it or publish a new task')
+            pinned = None
+            if review_only:
+                require_unfinished_review(self.attempt_path(task))
+                pinned, _ = checkpoint(self.store, task, self.sandbox)
             deadline = task['deadline']
             if extra_seconds:
                 deadline = max(time.time(), deadline or time.time()) + extra_seconds
-            self.store.update(task_id, state='ready', control=None, reason='', deadline=deadline,
-                              feedback=task['feedback'] + '\nPrevious interruption: ' + task['reason'])
+            override = task['attempt_seconds_override'] if attempt_seconds is None else attempt_seconds
+            feedback = task['feedback'] + '\nPrevious interruption: ' + task['reason']
+            if attempt_seconds is not None or extra_seconds:
+                effective_limit = override if override is not None else task['manifest']['attempt_seconds']
+                total = f'Unix UTC {deadline}' if deadline is not None else 'set from manifest total budget at first dispatch'
+                feedback += (f'\nRuntime budget update (explicit resume): each Pi/Codex process <= {effective_limit} seconds; '
+                             f'shared task deadline: {total}. Original handoff/manifest remain unchanged; '
+                             'required-check timeouts and scope remain unchanged.')
+            self.store.update(task_id, state='review_ready' if review_only else 'ready',
+                              review_resume=pinned, control=None, reason='', deadline=deadline,
+                              attempt_seconds_override=override, feedback=feedback)

@@ -51,6 +51,18 @@ class Store:
                 attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '');
         """)
         self.db.commit()
+        # Serialise startup migrations across a CLI and a running service.
+        self.db.execute('BEGIN IMMEDIATE')
+        try:
+            columns = {row[1] for row in self.db.execute('PRAGMA table_info(tasks)')}
+            if 'review_resume' not in columns:
+                self.db.execute('ALTER TABLE tasks ADD COLUMN review_resume TEXT')
+            if 'attempt_seconds_override' not in columns:
+                self.db.execute('ALTER TABLE tasks ADD COLUMN attempt_seconds_override INTEGER')
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
 
     def get(self, task_id):
         row = self.db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
@@ -58,6 +70,7 @@ class Store:
             raise Problem(f"Unknown task {task_id}")
         result = dict(row)
         result["manifest"] = json.loads(result["manifest"])
+        result['review_resume'] = json.loads(result['review_resume']) if result['review_resume'] is not None else None
         return result
 
     def tasks(self):
@@ -79,10 +92,12 @@ class Store:
 
     def _update(self, task_id, fields):
         valid = {"state", "round", "attempt", "started", "deadline", "pid", "pid_start", "reason", "control",
-                 "feedback", "last_issues", "phase", "expected_digest"}
+                 "feedback", "last_issues", "phase", "expected_digest", "review_resume", "attempt_seconds_override"}
         if not fields or set(fields) - valid:
             raise ValueError("Invalid state update")
         fields["updated"] = time.time()
+        if fields.get('review_resume') is not None:
+            fields['review_resume'] = json.dumps(fields['review_resume'])
         self.db.execute("UPDATE tasks SET " + ",".join(f"{k}=?" for k in fields) + " WHERE id=?",
                         (*fields.values(), task_id))
         self.event(task_id, "state", fields)
