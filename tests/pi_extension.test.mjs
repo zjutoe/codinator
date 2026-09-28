@@ -31,7 +31,7 @@ function harness() {
     operations.push(req);
     if (req.op === 'begin') state.state = 'implementing';
     if (req.op === 'pause') state.state = 'paused';
-    if (req.op === 'resume') state.state = 'ready';
+    if (req.op === 'resume') state.state = state.phase === 'feedback' ? 'needs_changes' : 'ready';
     if (req.op === 'submit') { state.state = 'reviewing'; state.attempt++; }
     return structuredClone(state);
   };
@@ -83,6 +83,25 @@ test('mixed batch is rejected without submitting or freezing ordinary tools', as
     assert.match(result.reason, /alone/);
     assert.equal(await h.handlers.tool_call({ toolName: 'write' }, h.ctx), undefined);
     assert.equal(h.operations.filter(r => r.op === 'submit').length, 0);
+  } finally { await h.close(); }
+});
+
+test('explicit resume of legacy blocked feedback dispatches Pi once with the existing review', async () => {
+  const h = harness();
+  try {
+    Object.assign(h.state, { state: 'blocked', phase: 'feedback', round: 3, attempt: 2,
+      reason: 'Two consecutive reviews retain the same issue set', feedback: 'R1: Finish the partial repair' });
+    await h.start();
+    assert.equal(h.messages.filter(m => m.options.triggerTurn).length, 0);
+    assert.equal((await h.handlers.tool_call({ toolName: 'write' }, h.ctx)).block, true);
+    await h.commands['codex-resume'].handler('', h.ctx);
+    await h.poll();
+    assert.equal(h.operations.filter(r => r.op === 'resume').length, 1);
+    assert.equal(h.operations.filter(r => r.op === 'begin').length, 1);
+    const turns = h.messages.filter(m => m.options.triggerTurn);
+    assert.equal(turns.length, 1);
+    assert.match(turns[0].message.content, /R1: Finish the partial repair/);
+    assert.equal(await h.handlers.tool_call({ toolName: 'write' }, h.ctx), undefined);
   } finally { await h.close(); }
 });
 

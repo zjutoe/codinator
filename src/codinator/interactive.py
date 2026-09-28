@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import threading
 
-from .agents import reviewer
+from .agents import reviewer, validate_verdict
 from .files import Problem, assert_scope, changes, digest, preserve, snapshot, write_json
 from .process import Interrupted, run_process, stop_group, process_start
 from .store import Store
@@ -217,9 +217,9 @@ class Interactive:
                 if state == 'needs_changes':
                     if t['round'] >= m['max_rounds']:
                         state, reason = 'blocked', 'Automatic rework round budget exhausted'
-                    elif issues == t['last_issues']:
-                        state, reason = 'blocked', 'Two consecutive reviews retain the same issue set'
                     else:
+                        # Stable issue IDs can describe partially repaired work.
+                        # The published round limit bounds automatic rework.
                         next_round += 1
                 s.update(self.task_id, state=state, phase='done' if state == 'accepted' else 'feedback',
                          round=next_round, feedback=report, last_issues=issues, reason=reason)
@@ -277,13 +277,34 @@ class Interactive:
                 assert_scope(intake, current, t['manifest']['allowed_paths'])
                 preserve(Path(t['manifest']['workspace']), current, self.state / 'blobs')
                 s.update(self.task_id, state='ready', phase='pi', reason='', expected_digest=digest(current))
-            elif t['phase'] == 'feedback' and t['state'] == 'paused':
+            elif t['phase'] == 'feedback':
+                legacy_block = t['state'] == 'blocked'
+                if legacy_block:
+                    if t['reason'] != 'Two consecutive reviews retain the same issue set':
+                        raise Problem('Task requires a new contract or explicit investigation; automatic resume is unavailable')
+                    if t['round'] >= t['manifest']['max_rounds']:
+                        raise Problem('Automatic rework round budget exhausted')
                 if digest(self.current(t)) != t['expected_digest']:
                     raise Problem('Workspace changed after review')
-                verdict = json.loads((self.attempt(t) / 'outcome.json').read_text())
+                a = self.attempt(t)
+                verdict = json.loads((a / 'outcome.json').read_text())
                 if verdict['verdict'] != 'needs_changes':
                     raise Problem('No pending implementation rework')
-                s.update(self.task_id, state='needs_changes', reason='')
+                if legacy_block:
+                    checked = t['review_resume']
+                    if checked is None:
+                        raise Problem('Missing submission/check evidence checkpoint')
+                    self._check_evidence(self.task_dir() / checked['attempt'], checked['digest'])
+                    if checked['passed']:
+                        validate_verdict(verdict, self.task_id, t['expected_digest'])
+                    author = 'Codex' if checked['passed'] else 'Controller checks'
+                    if (self._review_markdown(t, verdict, author) != t['feedback']
+                            or (a / 'review.md').read_text() != t['feedback']):
+                        raise Problem('Recorded review changed; reconciliation required')
+                # A paused feedback state already scheduled its next round;
+                # the old duplicate-issue blocker stopped before that increment.
+                s.update(self.task_id, state='needs_changes', reason='',
+                         round=t['round'] + int(legacy_block))
             elif t['phase'] in ('checks', 'codex'):
                 if digest(self.current(t)) != t['expected_digest']:
                     raise Problem('Frozen submission changed; cannot resume its review')

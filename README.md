@@ -47,8 +47,14 @@ env http_proxy=http://127.0.0.1:8888 https_proxy=http://127.0.0.1:8888 \
 ```
 
 可省略 `--resume` 先查看现场，再在 Pi 中决定恢复。不会因重启而重放不确定的旧提示。
-默认最多四轮；同一组问题连续两次未解决、额度/连接故障、范围或冻结快照变化等情况会暂停并说明原因。
+默认最多四轮；`needs_changes` 在剩余轮次内自动交回 Pi，即使问题编号与上一轮相同。
+稳定编号用于追踪同一问题，不能据此判断修复没有进展。轮数耗尽、额度/连接故障、范围或冻结快照变化等情况会停止并说明原因。
 正常返工不需逐轮确认，但程序不承诺无限重试或任何任务一定被接受。验收后也不自动 commit/push/merge。
+
+旧版因 `Two consecutive reviews retain the same issue set` 停在 `blocked / feedback` 的交互任务，
+更新后退出旧控制器，再用 `codinator pi TASK_ID --resume`（或新会话内 `/codex-resume`）明确恢复。
+控制器核对冻结快照、检查证据和最近返工结论，在原 `max_rounds` 内进入下一轮；保留全部旧 attempt，
+重新提交时才创建新 attempt，不重跑旧审查。此恢复不解除其他阻塞、不增加预算，也不修改契约。
 
 交互模式不会把用户阅读/讨论时间算作任务总墙钟，manifest 的 `max_seconds` 在此模式不适用；
 `attempt_seconds` 限制单次 Codex 审查（默认 7200 秒），各检查保留自己的超时。

@@ -74,13 +74,13 @@ class EngineTests(unittest.TestCase):
         first = self.store.root / 'tasks/test/attempt-0001/outcome.json'
         self.assertEqual(json.loads(first.read_text())['verdict'], 'needs_changes')
 
-    def test_two_rounds_without_progress_stop(self):
+    def test_repeated_issue_ids_use_published_round_budget(self):
         os.environ['FAKE_MODE'] = 'no-progress'
         self.engine.run('test')
         task = self.store.get('test')
         self.assertEqual(task['state'], 'blocked')
-        self.assertEqual(task['attempt'], 2)
-        self.assertIn('same issue', task['reason'])
+        self.assertEqual((task['round'], task['attempt']), (self.manifest['max_rounds'], self.manifest['max_rounds']))
+        self.assertIn('round budget exhausted', task['reason'])
 
     def test_scope_failure_never_reviews(self):
         os.environ['FAKE_MODE'] = 'scope'

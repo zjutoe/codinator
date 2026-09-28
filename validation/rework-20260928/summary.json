@@ -1,0 +1,60 @@
+{
+  "baseline_commit": "15690b10ed1169fb8ba6749a6e1a4caa2f47d0b1",
+  "date": "2026-09-28",
+  "tests": {
+    "red_regression": {
+      "command": "env PYTHONPATH=src:tests PYTHONDONTWRITEBYTECODE=1 /home/mye/src/llm/codinator/.venv/bin/python -B -m unittest test_interactive.InteractiveTests.test_repeated_issue_ids_continue_until_round_limit test_interactive.InteractiveTests.test_legacy_duplicate_block_resumes_rework_without_replaying_review",
+      "before_product_fix": true,
+      "exit_code": 1,
+      "tests": 2,
+      "failures": 1,
+      "errors": 1,
+      "evidence": "Codex tool output in this implementation session; no separate raw file"
+    },
+    "focused": {
+      "command": "env PYTHONPATH=src:tests PYTHONDONTWRITEBYTECODE=1 /home/mye/src/llm/codinator/.venv/bin/python -B -m unittest test_interactive test_engine.EngineTests.test_repeated_issue_ids_use_published_round_budget",
+      "tests": 24,
+      "exit_code": 0,
+      "seconds": 14.935,
+      "initial_sandbox_result": "23 pass; Unix socket bind blocked by host sandbox. Escalated rerun 24 pass."
+    },
+    "python_full": {
+      "command": "env PYTHONPATH=src:tests PYTHONDONTWRITEBYTECODE=1 /home/mye/src/llm/codinator/.venv/bin/python -B -m unittest discover -s tests -v",
+      "tests": 90,
+      "exit_code": 0,
+      "seconds": 118.464,
+      "stdout": "full.stdout",
+      "stderr": "full.stderr",
+      "outside_host_sandbox": true
+    },
+    "pi_extension": {
+      "command": "node tests/pi_extension.test.mjs",
+      "node_version": "v25.1.0",
+      "tests": 9,
+      "passed": 9,
+      "exit_code": 0,
+      "evidence": "Codex tool output in this implementation session; node --test only reported file-level count, so direct invocation verified all nine subtests"
+    }
+  },
+  "non_author_review": {
+    "agent": "/root/review_rework_fix",
+    "verdict": "accepted",
+    "actionable_findings": 0,
+    "independent_probes": [
+      "Legacy duplicate block from failed required checks resumes with evidence intact",
+      "Legacy duplicate block after review-only retry uses original pinned check evidence without replay"
+    ],
+    "probe_passes": 2,
+    "runtime_limitations": "Fake agents and local probes only; no real model connectivity or completed T0019 repair claimed."
+  },
+  "changed_file_sha256": {
+    "README.md": "e8911a4b9f0b566ecfcdd9cf792ff16b026ba7290cc4d57062b903d19ccd1b65",
+    "docs/pi-interface.md": "acd0f98b9cb8fa2b51de13b1a6ada91cafb4d7f500b24a118c8ba493e8ec5bb8",
+    "src/codinator/engine.py": "57587489157408a1029333ce2f5543c48105160498377806afb36435c6ce65dc",
+    "src/codinator/interactive.py": "8bbed024c0080936a4b8a4c103356d7842282a6b82afc92175d81e80f5ec425f",
+    "tests/pi_extension.test.mjs": "6904fcd831497220693b24987f2cf44f691b9f8d319053478eb188f32ad3dc07",
+    "tests/test_engine.py": "c1d6a83304dbed2d3d22b2829683fe3134e97265cebb7e0b06b17af8709361de",
+    "tests/test_interactive.py": "017f92605f34d7cb5cc632d43115fee5e1e0a7965ceba197fa95af1a63b296e3"
+  },
+  "original_task_state_mutated": false
+}

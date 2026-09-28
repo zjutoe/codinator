@@ -1,0 +1,14 @@
+{
+  "task": "T0019-motif-candidate-audit",
+  "recorded_at": "2026-09-28T10:44:30.329408+00:00",
+  "mode": "Recovery rehearsal against a private SQLite/attempt copy; real workspace read only",
+  "copy_directory": "/tmp/codinator-T0019-resume-probe-iqhieq2e",
+  "actual_state_before_and_after": "blocked / feedback / round 2 / attempt 2",
+  "copied_state_after": "needs_changes / feedback / round 3 / attempt 2",
+  "submission_digest": "83a0b001ab1653e3b9494fece46666d903c804262a4ac79f942c08bc6f41b8fe",
+  "source_row_unchanged": true,
+  "attempt_file_count": 69,
+  "attempt_files_unchanged": true,
+  "state_event_written_in_copy": true,
+  "model_calls": 0
+}

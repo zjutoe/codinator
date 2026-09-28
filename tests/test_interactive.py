@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 import test_engine
-from codinator.files import Problem, digest, snapshot
+from codinator.files import Problem, digest, file_info, snapshot
 from codinator.foreground import Bridge, pi_environment
 from codinator.interactive import Interactive
 from codinator.store import Store
@@ -154,15 +154,132 @@ class InteractiveTests(unittest.TestCase):
         self.assertEqual(self.finish()['state'], 'accepted')
         self.assertTrue((self.ui.task_dir() / 'attempt-0001/submission.md').exists())
 
-    def test_round_limit_stops_without_acceptance(self):
+    def test_repeated_issue_ids_continue_until_round_limit(self):
+        os.environ['FAKE_MODE'] = 'no-progress'
+        limit = self.manifest['max_rounds']
+        for round_number in range(1, limit + 1):
+            self.submit(str(round_number))
+            result = self.finish()
+            if round_number < limit:
+                self.assertEqual((result['state'], result['round']), ('needs_changes', round_number + 1))
+                # Resuming an already scheduled last round must neither reject
+                # it nor count another round.
+                self.ui.pause()
+                self.assertEqual(self.ui.resume()['round'], round_number + 1)
+                self.ui.begin()
+        self.assertEqual(result['state'], 'blocked')
+        self.assertEqual((result['round'], result['attempt']), (limit, limit))
+        self.assertIn('round budget exhausted', result['reason'])
+        with self.assertRaises(Problem):
+            self.ui.resume()
+
+    def legacy_duplicate_block(self):
+        """Reproduce a completed round-2 checkpoint written by the old controller."""
         os.environ['FAKE_MODE'] = 'no-progress'
         self.submit()
         self.finish()
         self.ui.begin()
+        (self.workspace / 'product.py').write_text('VALUE = 42\n# partial repair\n')
         self.submit('two')
+        self.finish()
+        self.store.update('test', state='blocked', phase='feedback', round=2,
+                          reason='Two consecutive reviews retain the same issue set')
+
+    def evidence_files(self):
+        return {str(p.relative_to(self.ui.task_dir())): file_info(p)
+                for p in self.ui.task_dir().rglob('*') if p.is_file()}
+
+    def test_legacy_duplicate_block_resumes_rework_without_replaying_review(self):
+        self.legacy_duplicate_block()
+        before = self.evidence_files()
+        feedback = self.ui.status()['feedback']
+        with patch.object(self.ui, '_spawn', side_effect=AssertionError('must not replay review')):
+            result = self.ui.resume()
+        self.assertEqual((result['state'], result['round'], result['attempt']), ('needs_changes', 3, 2))
+        self.assertEqual(result['feedback'], feedback)
+        self.assertEqual(self.evidence_files(), before)
+        with self.assertRaisesRegex(Problem, 'Only paused/blocked'):
+            self.ui.resume()
+        self.ui.pause()
+        self.assertEqual(self.ui.resume()['round'], 3)
+        self.ui.begin()
+        os.environ['FAKE_MODE'] = 'accept'
+        self.submit('three')
         result = self.finish()
-        self.assertEqual(result['state'], 'blocked')
-        self.assertIn('same issue', result['reason'])
+        self.assertEqual((result['state'], result['round'], result['attempt']), ('accepted', 3, 3))
+        after = self.evidence_files()
+        self.assertEqual({p: after[p] for p in before}, before)
+
+    def test_legacy_rework_resume_rejects_changed_workspace_or_evidence(self):
+        self.legacy_duplicate_block()
+        before = self.store.get('test')
+        a = self.ui.task_dir() / 'attempt-0002'
+        mutations = {
+            self.workspace / 'product.py': b'VALUE = -1\n',
+            a / 'checks/unit/stdout.txt': b'fabricated check output\n',
+            a / 'submission.json': b'{}',
+            a / 'review.md': b'fabricated review\n',
+        }
+        verdict = json.loads((a / 'outcome.json').read_text())
+        for bad in ('accepted', 'blocked', 'wrong-task', 'wrong-digest', 'changed-summary'):
+            value = dict(verdict)
+            if bad == 'wrong-task':
+                value['task_id'] = 'other'
+            elif bad == 'wrong-digest':
+                value['submission_digest'] = 'other'
+            elif bad == 'changed-summary':
+                value['summary'] = 'fabricated review'
+            else:
+                value['verdict'] = bad
+            mutations[(a / 'outcome.json', bad)] = json.dumps(value).encode()
+        for key, data in mutations.items():
+            path = key[0] if isinstance(key, tuple) else key
+            with self.subTest(mutation=str(key)):
+                original = path.read_bytes()
+                try:
+                    path.write_bytes(data)
+                    with self.assertRaises(Problem):
+                        self.ui.resume()
+                    self.assertEqual(self.store.get('test'), before)
+                finally:
+                    path.write_bytes(original)
+
+    def test_legacy_resume_does_not_override_budget_or_other_blockers(self):
+        self.legacy_duplicate_block()
+        original = self.store.get('test')
+        for fields in ({'round': self.manifest['max_rounds']},
+                       {'reason': 'Independent reviewer requires a new contract'},
+                       {'review_resume': None}):
+            with self.subTest(fields=fields):
+                self.store.update('test', **fields)
+                before = self.store.get('test')
+                with self.assertRaises(Problem):
+                    self.ui.resume()
+                self.assertEqual(self.store.get('test'), before)
+                self.store.update('test', **{key: original[key] for key in fields})
+
+    def test_legacy_resume_state_and_event_rollback_together(self):
+        self.legacy_duplicate_block()
+        before = self.store.get('test')
+        evidence = self.evidence_files()
+        events = list(self.store.db.execute('select * from events'))
+        with patch.object(Store, 'event', side_effect=RuntimeError('event write failed')):
+            with self.assertRaisesRegex(RuntimeError, 'event write failed'):
+                self.ui.resume()
+        self.assertEqual(self.store.get('test'), before)
+        self.assertEqual(list(self.store.db.execute('select * from events')), events)
+        self.assertEqual(self.evidence_files(), evidence)
+        self.assertEqual(self.ui.resume()['round'], 3)
+
+    def test_repeated_failed_checks_return_rework_without_codex(self):
+        (self.workspace / 'product.py').write_text('VALUE = -1\n')
+        with patch('codinator.interactive.reviewer', side_effect=AssertionError('must not review')):
+            self.submit()
+            self.finish()
+            self.ui.begin()
+            self.submit('two')
+            result = self.finish()
+        self.assertEqual((result['state'], result['round']), ('needs_changes', 3))
 
     def test_foreground_proxy_split_does_not_change_parent_environment(self):
         with patch.dict(os.environ, {'https_proxy': 'http://localhost:8888', 'ALL_PROXY': 'proxy'}):

@@ -187,8 +187,7 @@ class Engine:
                 ids = json.dumps(sorted(i['id'] for i in verdict['issues']))
                 if task['round'] >= m['max_rounds']:
                     raise Problem('Automatic rework round budget exhausted; ' + feedback)
-                if ids == task['last_issues']:
-                    raise Problem('Two consecutive reviews retain the same issue set; ' + feedback)
+                # Stable finding IDs do not measure progress; max_rounds bounds retries.
                 self.store.update(task_id, state='needs_changes', round=task['round'] + 1, phase='queued',
                                   feedback=feedback, last_issues=ids, review_resume=None)
             except (Problem, OSError, ValueError, KeyboardInterrupt) as exc:
