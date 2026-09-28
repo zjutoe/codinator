@@ -1,0 +1,16 @@
+{
+  "task": "T0019-motif-candidate-audit",
+  "recorded_at_utc": "2026-09-28T13:26:31.254256+00:00",
+  "mode": "Private copy of real SQLite, full workspace and attempt evidence; original state and workspace read only",
+  "copy_directory": "/tmp/codinator-T0019-cache-rehearsal-_g7xp7y9",
+  "before_state": "paused / pi / round 3 / attempt 2",
+  "copied_after_state": "ready / pi / round 3 / attempt 2",
+  "copied_caches_archived": 14,
+  "copied_cache_directories_removed": 3,
+  "old_attempt_files_unchanged": 69,
+  "implementation_hashes_unchanged": true,
+  "actual_workspace_and_state_unchanged": true,
+  "model_calls": 0,
+  "actual_snapshot_digest": "bf07e0057733a8c05b1999da7e33043ead4567b41b135fa6fb994185209a2f23",
+  "copied_after_digest": "3398311dfb1152c7323789df306a6d362f0dc776c0f54f49c6a45b73000b3446"
+}

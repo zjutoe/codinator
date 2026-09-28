@@ -13,7 +13,7 @@ import threading
 from .config import load_manifest
 from .engine import Engine
 from .files import Problem, digest, write_json
-from .interactive import Interactive
+from .interactive import Interactive, SubmissionRejected
 from .process import process_start, stop_group
 from .sandbox import Sandbox, pi_home
 from .store import Store, lock
@@ -40,11 +40,15 @@ class Handler(socketserver.StreamRequestHandler):
             op = request.get('op')
             if op == 'submit' and set(request) == {'op', 'request_id', 'markdown', 'runtime'}:
                 value = controller.submit(request['request_id'], request['markdown'], request['runtime'])
+            elif op == 'pause' and set(request) == {'op', 'reason'}:
+                value = controller.pause(request['reason'])
             elif op in ('status', 'begin', 'pause', 'resume') and set(request) == {'op'}:
                 value = getattr(controller, op)()
             else:
                 raise Problem('Unknown bridge operation or fields')
             result = {'ok': True, 'value': value}
+        except SubmissionRejected as exc:
+            result = {'ok': False, 'code': 'submission_rejected', 'error': str(exc), 'status': exc.status}
         except (Problem, OSError, ValueError, KeyError) as exc:
             result = {'ok': False, 'error': str(exc)}
         self.wfile.write((json.dumps(result, ensure_ascii=False) + '\n').encode())
@@ -53,6 +57,7 @@ class Handler(socketserver.StreamRequestHandler):
 def pi_environment(config, socket):
     env = {key: value for key, value in os.environ.items() if not key.lower().endswith('_proxy')}
     env.update({'PI_CODING_AGENT_DIR': str(config), 'PI_OFFLINE': '1', 'PYTHONDONTWRITEBYTECODE': '1',
+                'PYTHONPYCACHEPREFIX': str(Path(config) / 'pycache'),
                 'NO_PROXY': '*', 'no_proxy': '*', 'NODE_USE_ENV_PROXY': '0', 'CODINATOR_PI_SOCKET': str(socket)})
     return env
 

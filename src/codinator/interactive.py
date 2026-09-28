@@ -5,11 +5,19 @@ import json
 import os
 from pathlib import Path
 import threading
+import tempfile
 
 from .agents import reviewer, validate_verdict
-from .files import Problem, assert_scope, changes, digest, preserve, snapshot, write_json
+from .bytecode import clean_bytecode
+from .files import Problem, ScopeViolation, changes, digest, preserve, snapshot, write_json
 from .process import Interrupted, run_process, stop_group, process_start
 from .store import Store
+
+
+class SubmissionRejected(Problem):
+    def __init__(self, reason, status):
+        super().__init__(reason)
+        self.status = status
 
 
 class Interactive:
@@ -47,6 +55,11 @@ class Interactive:
     def current(self, task):
         m = task['manifest']
         return snapshot(Path(m['workspace']), m['excludes'])
+
+    def prepare_workspace(self, task, before, current):
+        m = task['manifest']
+        return clean_bytecode(Path(m['workspace']), before, current, m['allowed_paths'],
+                              m['excludes'], self.task_dir(), self.state / 'blobs')
 
     def recover(self):
         """Called under the workspace lock after a previous frontend exited."""
@@ -102,7 +115,21 @@ class Interactive:
                 raise Problem('Submission requires an active implementation')
             before = json.loads((self.task_dir() / 'intake.json').read_text())
             after = self.current(t)
-            assert_scope(before, after, t['manifest']['allowed_paths'])
+            try:
+                after = self.prepare_workspace(t, before, after)
+            except ScopeViolation as exc:
+                # Only this pre-acceptance gate can declare a definite rejection.
+                # Storage/transport failures and later crashes remain uncertain.
+                rejection = Path(tempfile.mkdtemp(prefix='rejected-', dir=self.task_dir()))
+                preserve(Path(t['manifest']['workspace']), after, self.state / 'blobs')
+                write_json(rejection / 'snapshot.json', after)
+                write_json(rejection / 'request.json', {'id': request_id, 'markdown': markdown,
+                                                       'runtime': runtime, 'reason': str(exc)})
+                with s.db:
+                    s._update(self.task_id, {'reason': 'Submission rejected: ' + str(exc)})
+                    s.event(self.task_id, 'interactive_submission_rejected',
+                            {'id': request_id, 'evidence': str(rejection), 'reason': str(exc)})
+                raise SubmissionRejected(str(exc), self.status()) from exc
             preserve(Path(t['manifest']['workspace']), after, self.state / 'blobs')
             n = self.next_attempt(t)
             s.update(self.task_id, attempt=n, state='checking', phase='submission',
@@ -227,7 +254,9 @@ class Interactive:
             # This thread is the external execution boundary: unexpected failures
             # must persist as blocked, never leave a phantom active review.
             with self.store() as s:
-                s.update(self.task_id, state='paused' if self.cancel.is_set() else 'blocked', reason=str(exc))
+                current = s.get(self.task_id)
+                reason = current['reason'] if current['state'] == 'paused' else str(exc)
+                s.update(self.task_id, state='paused' if self.cancel.is_set() else 'blocked', reason=reason)
 
     @staticmethod
     def _review_markdown(task, verdict, author):
@@ -256,12 +285,14 @@ class Interactive:
         if self._evidence_digest(a) != expected:
             raise Problem('Immutable submission/check evidence changed')
 
-    def pause(self):
+    def pause(self, reason='Paused by user or Pi session exit'):
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 10000:
+            raise Problem('Pause reason must be nonempty text, at most 10000 characters')
         with self.store() as s:
             self.cancel.set()
             t = s.get(self.task_id)
             if t['state'] in ('ready', 'implementing', 'checking', 'reviewing', 'needs_changes'):
-                s.update(self.task_id, state='paused', reason='Paused by user or Pi session exit')
+                s.update(self.task_id, state='paused', reason=reason)
         return self.status()
 
     def resume(self):
@@ -274,7 +305,7 @@ class Interactive:
             if t['phase'] in ('', 'pi', 'submission'):
                 current = self.current(t)
                 intake = json.loads((self.task_dir() / 'intake.json').read_text())
-                assert_scope(intake, current, t['manifest']['allowed_paths'])
+                current = self.prepare_workspace(t, intake, current)
                 preserve(Path(t['manifest']['workspace']), current, self.state / 'blobs')
                 s.update(self.task_id, state='ready', phase='pi', reason='', expected_digest=digest(current))
             elif t['phase'] == 'feedback':
@@ -339,7 +370,7 @@ class Interactive:
         return self.status()
 
     def close(self):
-        self.pause()
+        self.pause('Pi session exit')
         if self.thread:
             self.thread.join(timeout=15)
             if self.thread.is_alive():

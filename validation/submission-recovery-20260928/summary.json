@@ -1,0 +1,54 @@
+{
+  "baseline_commit": "961a1b86ccc76fb35ed20fec93a8c648c4530ffc",
+  "date": "2026-09-28",
+  "python_full": {
+    "command": "env PYTHONPATH=src:tests PYTHONDONTWRITEBYTECODE=1 /home/mye/src/llm/codinator/.venv/bin/python -B -m unittest discover -s tests -v",
+    "tests": 106,
+    "exit_code": 0,
+    "seconds": 119.268,
+    "stdout": "full.stdout",
+    "stderr": "full.stderr",
+    "outside_host_sandbox": true
+  },
+  "pi_extension": {
+    "command": "node tests/pi_extension.test.mjs",
+    "tests": 14,
+    "passed": 14,
+    "exit_code": 0,
+    "evidence": "Direct tool output in this implementation session; no separately recorded stdout file"
+  },
+  "non_author_review": {
+    "agent": "/root/review_submission_recovery",
+    "verdict": "accepted",
+    "findings_fixed": [
+      "Abort while waiting for a successful receipt must pause too",
+      "Bytecode magic and cache tag must be recognized, not just a CRLF header",
+      "Recheck hardlink count before and after cache move"
+    ],
+    "independent_probes": [
+      "Aborted successful receipt pauses without replay",
+      "Invalid bytecode magic remains a scope violation",
+      "Hardlink created during archiving prevents cleanup",
+      "Second cache move failure preserves originals; retry uses another archive"
+    ]
+  },
+  "limits": [
+    "Native Pi submit and explicit implementation resume only; no cleanup during frozen checks/review",
+    "Only controller-interpreter cache tag and magic are automatically recognized",
+    "Cache and archive must support same-filesystem rename; failures retain evidence, no delete fallback",
+    "All tests use fake agents or local state copies, not model connectivity evidence"
+  ],
+  "changed_file_sha256": {
+    "README.md": "ec7c2213278fc78675af15c1f2d7641b0bf9406b918f1e8eef1142a7e282d9e4",
+    "docs/pi-interface.md": "5d40905f985912367f8853756065abcf40a8e7ca4cebca92417ebab19011311f",
+    "src/codinator/bytecode.py": "91a7c2f00794abe7f3a1f28b1e128dffa2255cb628afd44556255323bce64456",
+    "src/codinator/files.py": "432956f34a259e489d97251f415e7052291816fd15c5b012935dbfa73ae963ef",
+    "src/codinator/foreground.py": "08956e7b4d9b01759a77c3adc8e03b4009184ecad557a079e242b23cbb70112b",
+    "src/codinator/interactive.py": "79aa8a14ff18ab8103d20247f9731c2f5c215c3d0da94639b277e5accc0d3c71",
+    "src/codinator/pi_extension.mjs": "6fa2ecefd778381f2ce814924e6d51f2584fa231ff2be8f1e0164758c236842d",
+    "tests/pi_extension.test.mjs": "cfd6e0f4b881e5b6808c4b06a2d32218d8d902cbc0e73abe4c726867bfa46756",
+    "tests/test_bytecode.py": "bb012124cdcf2ec21fab29cec6954998782949a4ff115e9c4ee8373cfafa5ead",
+    "tests/test_submission_recovery.py": "fe03be1f720fa3488c72afeaa7962e9ec74f62c4bdda46cdf652090a6a731b13"
+  },
+  "real_T0019_mutated": false
+}

@@ -5,7 +5,7 @@ import net from 'node:net';
 import { Duplex } from 'node:stream';
 import { syncBuiltinESMExports } from 'node:module';
 
-function harness() {
+function harness(overrides = {}) {
   const handlers = {}, commands = {}, tools = {}, messages = [], operations = [];
   let poll;
   const originalInterval = globalThis.setInterval, originalClear = globalThis.clearInterval;
@@ -30,15 +30,24 @@ function harness() {
   const request = async req => {
     operations.push(req);
     if (req.op === 'begin') state.state = 'implementing';
-    if (req.op === 'pause') state.state = 'paused';
+    if (req.op === 'pause') {
+      if (overrides.pause) return overrides.pause(req, state);
+      state.state = 'paused'; state.reason = req.reason;
+    }
     if (req.op === 'resume') state.state = state.phase === 'feedback' ? 'needs_changes' : 'ready';
-    if (req.op === 'submit') { state.state = 'reviewing'; state.attempt++; }
+    if (req.op === 'submit') {
+      if (overrides.submit) return overrides.submit(req, state);
+      state.state = 'reviewing'; state.attempt++;
+    }
     return structuredClone(state);
   };
   install(pi, request);
   return { ctx, state, handlers, commands, tools, messages, operations,
     poll: () => poll(), start: () => handlers.session_start({}, ctx),
-    close: async () => { await handlers.session_shutdown(); globalThis.setInterval = originalInterval; globalThis.clearInterval = originalClear; },
+    close: async () => {
+      try { await handlers.session_shutdown(); }
+      finally { globalThis.setInterval = originalInterval; globalThis.clearInterval = originalClear; }
+    },
     reserve: () => handlers.tool_call({ toolName: 'codex_submit_review', toolCallId: 'call-1' }, ctx),
   };
 }
@@ -155,6 +164,99 @@ test('model mismatch pauses before another implementation turn', async () => {
     assert.equal(h.state.state, 'paused');
     assert.equal((await h.handlers.tool_call({ toolName: 'bash' }, h.ctx)).block, true);
   } finally { await h.close(); }
+});
+
+test('definite rejection returns to Pi once without replaying the submission', async () => {
+  const h = harness({ submit: async (_req, state) => {
+    throw Object.assign(new Error('outside.txt is outside allowed paths'),
+      { code: 'submission_rejected', status: { ...state, state: 'implementing' } });
+  } });
+  try {
+    await h.start(); await h.reserve();
+    await h.tools.codex_submit_review.execute('call-1', { summary: 'delivery' });
+    await h.handlers.agent_settled({}, h.ctx);
+    assert.equal(h.operations.filter(r => r.op === 'submit').length, 1);
+    assert.equal(h.operations.filter(r => r.op === 'pause').length, 0);
+    assert.equal(h.messages.filter(m => m.options.triggerTurn).length, 2);
+    assert.match(h.messages.at(-1).message.content, /明确拒收.*outside.txt/);
+    assert.equal(await h.handlers.tool_call({ toolName: 'write' }, h.ctx), undefined);
+    await h.reserve();
+    await h.tools.codex_submit_review.execute('call-1', { summary: 'still bad' });
+    await h.handlers.agent_settled({}, h.ctx);
+    assert.equal(h.state.state, 'paused');
+    assert.match(h.state.reason, /再次被明确拒收/);
+    assert.equal(h.messages.filter(m => m.options.triggerTurn).length, 2);
+  } finally { await h.close(); }
+});
+
+test('unknown submission failure pauses with exact cause and never retries', async () => {
+  const h = harness({ submit: async () => { throw new Error('socket timeout after possible receipt'); } });
+  try {
+    await h.start(); await h.reserve();
+    await h.tools.codex_submit_review.execute('call-1', { summary: 'delivery' });
+    await h.handlers.agent_settled({}, h.ctx); await h.poll();
+    assert.equal(h.state.state, 'paused');
+    assert.match(h.state.reason, /提交结果不确定：socket timeout/);
+    assert.equal(h.operations.filter(r => r.op === 'submit').length, 1);
+    assert.equal(h.messages.filter(m => m.options.triggerTurn).length, 1);
+  } finally { await h.close(); }
+});
+
+test('late rejection cannot undo an explicit pause or trigger more Pi work', async () => {
+  let release;
+  const h = harness({ submit: (_req, state) => new Promise((_resolve, reject) => {
+    release = () => reject(Object.assign(new Error('scope rejected'),
+      { code: 'submission_rejected', status: { ...state, state: 'implementing' } }));
+  }) });
+  try {
+    await h.start(); await h.reserve();
+    await h.tools.codex_submit_review.execute('call-1', { summary: 'delivery' });
+    const settled = h.handlers.agent_settled({}, h.ctx);
+    await h.commands['codex-pause'].handler('', h.ctx);
+    release(); await settled;
+    assert.equal(h.state.state, 'paused');
+    assert.equal(h.messages.filter(m => m.options.triggerTurn).length, 1);
+  } finally { await h.close(); }
+});
+
+test('abort while waiting for a successful receipt pauses without replay', async () => {
+  let release;
+  const h = harness({ submit: (_req, state) => new Promise(resolve => {
+    release = () => { state.state = 'reviewing'; resolve(structuredClone(state)); };
+  }) });
+  try {
+    await h.start(); await h.reserve();
+    const controller = new AbortController();
+    await h.tools.codex_submit_review.execute('call-1', { summary: 'delivery' }, controller.signal);
+    const settled = h.handlers.agent_settled({}, h.ctx);
+    controller.abort(); release(); await settled;
+    assert.equal(h.state.state, 'paused');
+    assert.match(h.state.reason, /提交等待期间 Pi 已中止/);
+    assert.equal(h.operations.filter(r => r.op === 'submit').length, 1);
+    assert.equal(h.messages.filter(m => m.options.triggerTurn).length, 1);
+  } finally { await h.close(); }
+});
+
+test('failed pause RPC preserves cause in session and polling cannot unfreeze tools', async () => {
+  const h = harness({
+    submit: async () => { throw new Error('submit transport failed'); },
+    pause: async () => { throw new Error('controller still unreachable'); },
+  });
+  try {
+    await h.start(); await h.reserve();
+    await h.tools.codex_submit_review.execute('call-1', { summary: 'delivery' });
+    await h.handlers.agent_settled({}, h.ctx);
+    const count = h.operations.length;
+    await h.poll();
+    assert.equal(h.operations.length, count);
+    assert.equal((await h.handlers.tool_call({ toolName: 'write' }, h.ctx)).block, true);
+    assert.ok(h.messages.some(m => /提交结果不确定：submit transport failed/.test(m.message.content)));
+    assert.ok(h.messages.some(m => /暂停状态写入失败/.test(m.message.content)));
+    assert.equal(h.messages.filter(m => m.options.triggerTurn).length, 1);
+  } finally {
+    // The shutdown request also fails while this transport remains offline.
+    await h.close().catch(() => {});
+  }
 });
 
 test('session shutdown clears pending and poll cannot dispatch another round', async () => {

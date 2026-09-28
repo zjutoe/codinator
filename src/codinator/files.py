@@ -13,6 +13,10 @@ class Problem(RuntimeError):
     pass
 
 
+class ScopeViolation(Problem):
+    """A definite refusal before any submission is accepted."""
+
+
 def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
@@ -112,9 +116,9 @@ def changes(before, after):
 
 def assert_scope(before, after, allowed):
     if before["git"] != after["git"]:
-        raise Problem("Git HEAD/branch/index changed; no commit, branch switch or staging is authorized")
+        raise ScopeViolation("Git HEAD/branch/index changed; no commit, branch switch or staging is authorized")
     if before['root_mode'] != after['root_mode']:
-        raise Problem('Workspace root permissions changed')
+        raise ScopeViolation('Workspace root permissions changed')
     def permitted(p):
         if under(p, allowed):
             return True
@@ -122,7 +126,7 @@ def assert_scope(before, after, allowed):
                 and any(a.startswith(p + '/') for a in allowed))
     outside = [p for p in changes(before, after) if not permitted(p)]
     if outside:
-        raise Problem("Changes outside allowed paths: " + ", ".join(outside[:20]))
+        raise ScopeViolation("Changes outside allowed paths: " + ", ".join(outside[:20]))
 
 
 def preserve(root, snap, blobs):
