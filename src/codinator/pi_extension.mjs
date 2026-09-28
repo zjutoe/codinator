@@ -33,12 +33,12 @@ export function install(pi, request) {
     return r.provider === 'bonsai' && r.model === 'bonsai2-27b' && r.thinking === 'xhigh';
   };
   const note = (content, trigger = false) => pi.sendMessage({
-    customType: 'codidator-review', content, display: true,
+    customType: 'codinator-review', content, display: true,
   }, { deliverAs: 'followUp', triggerTurn: trigger });
   const display = value => {
     state = value;
-    ctx.ui.setStatus('codidator', `${value.id} · ${value.state} · round ${value.round}`);
-    ctx.ui.setWidget('codidator', [`Codex review: ${value.state}`, `Evidence: ${value.evidence}`]);
+    ctx.ui.setStatus('codinator', `${value.id} · ${value.state} · round ${value.round}`);
+    ctx.ui.setWidget('codinator', [`Codex review: ${value.state}`, `Evidence: ${value.evidence}`]);
   };
   async function pause(reason, abort = false) {
     generation++;
@@ -67,7 +67,7 @@ export function install(pi, request) {
         if (stopped || epoch !== generation) return;
         display(started);
         nudged = false;
-        note(`Codidator 已授权本轮实施，无需逐轮确认。\n任务：${started.id}；轮次：${started.round}\n` +
+        note(`Codinator 已授权本轮实施，无需逐轮确认。\n任务：${started.id}；轮次：${started.round}\n` +
           `先读取 ${started.handoff} 和 AGENTS.md。只可改：${JSON.stringify(started.allowed_paths)}。\n` +
           `必需检查：${JSON.stringify(started.checks)}\n` +
           `原交接/验收条件只读；执行记录通过 codex_submit_review 的 Markdown 参数提交。不要改状态文档，不要 commit/push/merge。\n` +
@@ -77,7 +77,7 @@ export function install(pi, request) {
         const key = `${value.attempt}:${value.state}:${value.reason}`;
         if (!seen.has(key)) {
           seen.add(key);
-          note(`Codidator：${value.state}\n${value.reason}\n正式结果/证据：${value.evidence}\n${value.feedback || ''}`);
+          note(`Codinator：${value.state}\n${value.reason}\n正式结果/证据：${value.evidence}\n${value.feedback || ''}`);
         }
       }
     } catch (error) {
@@ -193,7 +193,7 @@ export function install(pi, request) {
 }
 
 export default function (pi) {
-  const socket = process.env.CODIDATOR_PI_SOCKET;
-  if (!socket) throw new Error('Launch with codidator pi MANIFEST; controller socket is required');
+  const socket = process.env.CODINATOR_PI_SOCKET;
+  if (!socket) throw new Error('Launch with codinator pi MANIFEST; controller socket is required');
   install(pi, request => connect(socket, request));
 }

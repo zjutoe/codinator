@@ -10,13 +10,13 @@ import time
 import unittest
 from unittest.mock import patch
 
-from codidator.cli import notifications
-from codidator.config import load_manifest
-from codidator.engine import Engine, _budget_timeout
-from codidator.agents import reviewer as real_reviewer, worker as real_worker
-from codidator.files import Problem, digest, snapshot, file_info
-from codidator.process import run_process as real_run_process
-from codidator.store import Store
+from codinator.cli import notifications
+from codinator.config import load_manifest
+from codinator.engine import Engine, _budget_timeout
+from codinator.agents import reviewer as real_reviewer, worker as real_worker
+from codinator.files import Problem, digest, snapshot, file_info
+from codinator.process import run_process as real_run_process
+from codinator.store import Store
 
 
 class FakeSandbox:
@@ -113,7 +113,7 @@ class EngineTests(unittest.TestCase):
             self.engine.resume('test')
 
     def test_failed_required_check_does_not_accept(self):
-        with patch('codidator.engine.run_process', side_effect=Problem('check failed')):
+        with patch('codinator.engine.run_process', side_effect=Problem('check failed')):
             self.engine.run('test')
         self.assertEqual(self.store.get('test')['state'], 'blocked')
 
@@ -182,7 +182,7 @@ class EngineTests(unittest.TestCase):
 
     def test_unconfirmed_old_process_blocks_resume_and_dispatch(self):
         self.store.update('test', state='implementing', pid=123456, pid_start='old')
-        with patch('codidator.engine.stop_group'), patch('codidator.engine.process_start', return_value='old'):
+        with patch('codinator.engine.stop_group'), patch('codinator.engine.process_start', return_value='old'):
             self.engine.recover()
             self.assertEqual(self.store.get('test')['state'], 'blocked')
             with self.assertRaises(Problem):
@@ -207,8 +207,8 @@ class EngineTests(unittest.TestCase):
         self.engine.resume('test', review_only=True)
         self.assertEqual(self.store.get('test')['state'], 'review_ready')
         os.environ['FAKE_MODE'] = 'accept'
-        with patch('codidator.engine.worker', side_effect=AssertionError('Pi must not run')), \
-             patch('codidator.engine.run_process', side_effect=AssertionError('checks must not run')):
+        with patch('codinator.engine.worker', side_effect=AssertionError('Pi must not run')), \
+             patch('codinator.engine.run_process', side_effect=AssertionError('checks must not run')):
             self.engine.run('test')
         task = self.store.get('test')
         self.assertEqual((task['state'], task['round'], task['attempt']), ('accepted', 1, 2), task['reason'])
@@ -226,13 +226,13 @@ class EngineTests(unittest.TestCase):
         reopened = Store(self.store.root)
         self.addCleanup(reopened.db.close)
         restarted = Engine(reopened, sandbox=FakeSandbox(), pi_bin=self.agent, codex_bin=self.agent)
-        with patch('codidator.engine.worker', side_effect=AssertionError('Pi must not run')):
+        with patch('codinator.engine.worker', side_effect=AssertionError('Pi must not run')):
             restarted.run('test')
         task = self.store.get('test')
         self.assertEqual((task['state'], task['round'], task['attempt']), ('blocked', 1, 2))
         self.engine.resume('test', review_only=True)
         os.environ['FAKE_MODE'] = 'accept'
-        with patch('codidator.engine.worker', side_effect=AssertionError('Pi must not run')):
+        with patch('codinator.engine.worker', side_effect=AssertionError('Pi must not run')):
             self.engine.run('test')
         task = self.store.get('test')
         self.assertEqual((task['state'], task['round'], task['attempt']), ('accepted', 1, 3), task['reason'])
@@ -291,8 +291,8 @@ class EngineTests(unittest.TestCase):
                 p.write_bytes(original)
                 self.engine.resume('test', review_only=True)
                 p.write_text(json.dumps(malformed))
-                with patch('codidator.engine.reviewer', side_effect=AssertionError('review must not run')), \
-                     patch('codidator.engine.worker', side_effect=AssertionError('Pi must not run')):
+                with patch('codinator.engine.reviewer', side_effect=AssertionError('review must not run')), \
+                     patch('codinator.engine.worker', side_effect=AssertionError('Pi must not run')):
                     self.engine.run('test')
                 task = self.store.get('test')
                 self.assertEqual((task['state'], task['attempt']), ('blocked', 1))
@@ -303,8 +303,8 @@ class EngineTests(unittest.TestCase):
         source = self.review_failure()
         self.engine.resume('test', review_only=True)
         (source / 'delivery/summary.md').write_text('changed after enqueue')
-        with patch('codidator.engine.reviewer', side_effect=AssertionError('review must not run')), \
-             patch('codidator.engine.worker', side_effect=AssertionError('Pi must not run')):
+        with patch('codinator.engine.reviewer', side_effect=AssertionError('review must not run')), \
+             patch('codinator.engine.worker', side_effect=AssertionError('Pi must not run')):
             self.engine.run('test')
         self.assertEqual(self.store.get('test')['state'], 'blocked')
         self.assertIn('evidence', self.store.get('test')['reason'].lower())
@@ -319,7 +319,7 @@ class EngineTests(unittest.TestCase):
             (source / 'delivery/summary.md').write_text('concurrent edit during review')
             return result
 
-        with patch('codidator.engine.reviewer', side_effect=mutate):
+        with patch('codinator.engine.reviewer', side_effect=mutate):
             self.engine.run('test')
         self.assertEqual(self.store.get('test')['state'], 'blocked')
         self.assertIn('evidence changed', self.store.get('test')['reason'])
@@ -332,8 +332,8 @@ class EngineTests(unittest.TestCase):
             os.environ['FAKE_MODE'] = 'no-progress' if args[1].name == 'attempt-0002' else 'accept'
             return real_reviewer(*args, **kwargs)
 
-        with patch('codidator.engine.worker', wraps=real_worker) as worker_calls, \
-             patch('codidator.engine.reviewer', side_effect=review):
+        with patch('codinator.engine.worker', wraps=real_worker) as worker_calls, \
+             patch('codinator.engine.reviewer', side_effect=review):
             self.engine.run('test')
         task = self.store.get('test')
         self.assertEqual((task['state'], task['round'], task['attempt']), ('accepted', 2, 3), task['reason'])
@@ -354,7 +354,7 @@ class EngineTests(unittest.TestCase):
         self.assertFalse(self.engine.attempt_path(task).exists())
         self.engine.resume('test', review_only=True)
         os.environ['FAKE_MODE'] = 'accept'
-        with patch('codidator.engine.worker', side_effect=AssertionError('Pi must not run')):
+        with patch('codinator.engine.worker', side_effect=AssertionError('Pi must not run')):
             self.engine.run('test')
         self.assertEqual(self.store.get('test')['state'], 'accepted')
 
@@ -372,7 +372,7 @@ class EngineTests(unittest.TestCase):
         self.review_failure()
         self.store.update('test', deadline=time.time() - 1)
         self.engine.resume('test', review_only=True)
-        with patch('codidator.engine.reviewer', side_effect=AssertionError('budget exhausted')):
+        with patch('codinator.engine.reviewer', side_effect=AssertionError('budget exhausted')):
             self.engine.run('test')
         self.assertIn('budget exhausted', self.store.get('test')['reason'])
         self.engine.resume('test', review_only=True, extra_seconds=60)
@@ -474,9 +474,9 @@ class EngineTests(unittest.TestCase):
         events = [json.loads(r[0]) for r in self.store.db.execute('SELECT payload FROM events WHERE kind=?', ('state',))]
         self.assertTrue(any(e.get('attempt_seconds_override') == 7200 and e.get('state') == 'ready' for e in events))
         os.environ['FAKE_MODE'] = 'accept'
-        with patch('codidator.engine.worker', wraps=real_worker) as workers, \
-             patch('codidator.engine.reviewer', wraps=real_reviewer) as reviews, \
-             patch('codidator.engine.run_process', wraps=real_run_process) as checks:
+        with patch('codinator.engine.worker', wraps=real_worker) as workers, \
+             patch('codinator.engine.reviewer', wraps=real_reviewer) as reviews, \
+             patch('codinator.engine.run_process', wraps=real_run_process) as checks:
             self.engine.run('test')
         task = self.store.get('test')
         self.assertEqual((task['state'], task['attempt']), ('accepted', 2), task['reason'])
@@ -500,8 +500,8 @@ class EngineTests(unittest.TestCase):
         self.store.update('test', state='paused')
         self.engine.resume('test')  # Omission retains the explicit override.
         os.environ['FAKE_MODE'] = 'rework'
-        with patch('codidator.engine.worker', wraps=real_worker) as workers, \
-             patch('codidator.engine.reviewer', wraps=real_reviewer) as reviews:
+        with patch('codinator.engine.worker', wraps=real_worker) as workers, \
+             patch('codinator.engine.reviewer', wraps=real_reviewer) as reviews:
             self.engine.run('test')
         self.assertEqual(self.store.get('test')['state'], 'accepted')
         self.assertEqual([c.args[4]['timeout'] for c in workers.call_args_list], [7200, 7200])
@@ -510,9 +510,9 @@ class EngineTests(unittest.TestCase):
     def test_override_still_caps_both_agents_by_total_deadline(self):
         self.store.update('test', state='paused', deadline=time.time() + 30)
         self.engine.resume('test', attempt_seconds=7200)
-        with patch('codidator.engine.worker', wraps=real_worker) as workers, \
-             patch('codidator.engine.reviewer', wraps=real_reviewer) as reviews, \
-             patch('codidator.engine.run_process', wraps=real_run_process) as checks:
+        with patch('codinator.engine.worker', wraps=real_worker) as workers, \
+             patch('codinator.engine.reviewer', wraps=real_reviewer) as reviews, \
+             patch('codinator.engine.run_process', wraps=real_run_process) as checks:
             self.engine.run('test')
         self.assertEqual(self.store.get('test')['state'], 'accepted')
         for timeout in (workers.call_args.args[4]['timeout'], reviews.call_args.args[3]['timeout']):
@@ -528,12 +528,12 @@ class EngineTests(unittest.TestCase):
             nonlocal calls
             calls += 1
             if calls >= 2:
-                with patch('codidator.engine.time.time', return_value=deadline):
+                with patch('codinator.engine.time.time', return_value=deadline):
                     return original_timeout(deadline, limit)
             return original_timeout(deadline, limit)
-        with patch('codidator.engine._budget_timeout', side_effect=after_pi), \
-             patch('codidator.engine.run_process', side_effect=AssertionError('expired check launched')), \
-             patch('codidator.engine.reviewer', side_effect=AssertionError('expired review launched')):
+        with patch('codinator.engine._budget_timeout', side_effect=after_pi), \
+             patch('codinator.engine.run_process', side_effect=AssertionError('expired check launched')), \
+             patch('codinator.engine.reviewer', side_effect=AssertionError('expired review launched')):
             self.engine.run('test')
         task = self.store.get('test')
         self.assertEqual((task['state'], task['round'], task['attempt']), ('blocked', 1, 1))
@@ -544,8 +544,8 @@ class EngineTests(unittest.TestCase):
         source = self.review_failure()
         self.engine.resume('test', review_only=True, attempt_seconds=7200, extra_seconds=14400)
         os.environ['FAKE_MODE'] = 'accept'
-        with patch('codidator.engine.worker', side_effect=AssertionError('Pi must not run')), \
-             patch('codidator.engine.reviewer', wraps=real_reviewer) as reviews:
+        with patch('codinator.engine.worker', side_effect=AssertionError('Pi must not run')), \
+             patch('codinator.engine.reviewer', wraps=real_reviewer) as reviews:
             self.engine.run('test')
         self.assertEqual(self.store.get('test')['state'], 'accepted')
         self.assertEqual(reviews.call_args.args[3]['timeout'], 7200)

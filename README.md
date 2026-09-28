@@ -1,4 +1,4 @@
-# Codidator
+# Codinator
 
 让 Codex 制订任务、Pi + Bonsai 实施、Codex 独立验收，并自动安排返工。
 你发布一份明确的任务契约，程序负责派发、留证、冻结、验收和通知。
@@ -6,14 +6,20 @@
 首版面向 Linux、单用户、串行任务；Python 3.11+，Python 运行时无第三方依赖。
 需要已安装并完成认证的 `pi`、`codex`、`git`、`bwrap`。
 
+2026-09-28 统一项目名称为 **Codinator**：Python 包、发行包和命令均为 `codinator`，
+环境变量使用 `CODINATOR_` 前缀，默认状态目录为 `~/.local/state/codinator`。
+升级现有安装前停止旧控制器和服务，卸载原发行包，再按下文安装；不要让两个版本同时操作同一工作区。
+已有任务继续通过 `--state-dir` 指向原状态目录，不搬迁或重写原 manifest、会话和证据。
+服务 unit 须重新生成，环境变量及外部调用脚本须同步改名；安装本身不启用服务或自动派发任务。
+
 ## Pi 主界面：自动实施与审查
 
 在交互终端启动一份明确的任务 manifest：
 
 ```bash
-cd ~/src/llm/codidator
+cd ~/src/llm/codinator
 env http_proxy=http://127.0.0.1:8888 https_proxy=http://127.0.0.1:8888 \
-    .venv/bin/codidator pi /absolute/path/to/task.json
+    .venv/bin/codinator pi /absolute/path/to/task.json
 ```
 
 终端中显示原生 Pi CLI 和 Bonsai 的实时输出。任务实施 → 自检 → 提交 Markdown 总结 →
@@ -23,7 +29,7 @@ Pi 固定使用 `bonsai/bonsai2-27b/xhigh` 并直连本机；Codex 固定使用 
 
 Pi 完成后调用扩展提供的 `codex_submit_review` 工具，程序负责生成 `submission.md`。
 Codex 的正式意见保存在 `review.md` 并显示在 Pi 中；中间模型输出保存在仓外原始记录中。
-这些文件位于 `~/.local/state/codidator/interactive/tasks/TASK_ID/attempt-NNNN/`，
+这些文件位于 `~/.local/state/codinator/interactive/tasks/TASK_ID/attempt-NNNN/`，
 每轮使用新目录，历史保留。Pi 原生会话位于同一 state 根下的 `private/TASK_ID/`。
 
 常用命令直接输入 Pi：
@@ -37,7 +43,7 @@ Codex 的正式意见保存在 `review.md` 并显示在 Pi 中；中间模型输
 
 ```bash
 env http_proxy=http://127.0.0.1:8888 https_proxy=http://127.0.0.1:8888 \
-    .venv/bin/codidator pi TASK_ID --resume
+    .venv/bin/codinator pi TASK_ID --resume
 ```
 
 可省略 `--resume` 先查看现场，再在 Pi 中决定恢复。不会因重启而重放不确定的旧提示。
@@ -53,10 +59,10 @@ Pi 模型执行受其客户端设置和主动中断控制。新入口与旧 `run
 ## 快速开始
 
 ```bash
-cd ~/src/llm/codidator
+cd ~/src/llm/codinator
 python3 -m venv --system-site-packages .venv
-.venv/bin/python -m pip install --no-build-isolation --no-deps -e .
-.venv/bin/codidator doctor
+.venv/bin/python -m pip install --no-index --no-build-isolation --no-deps -e .
+.venv/bin/codinator doctor
 ```
 
 复制 [examples/task.json](examples/task.json)，将 workspace、handoff、允许路径和检查命令改为真实值。
@@ -65,9 +71,9 @@ workspace 必须是独立 Git 仓库／worktree 的根目录；可以有未提�
 不要把正在人工编辑的工作树直接投入自动运行。
 
 ```bash
-.venv/bin/codidator submit /absolute/path/to/task.json
-.venv/bin/codidator run demo-add
-.venv/bin/codidator status demo-add
+.venv/bin/codinator submit /absolute/path/to/task.json
+.venv/bin/codinator run demo-add
+.venv/bin/codinator status demo-add
 ```
 
 `submit` 是明确派发授权：程序不会扫描项目里所有 `ready` 文档自行开工。
@@ -82,7 +88,7 @@ workspace 必须是独立 Git 仓库／worktree 的根目录；可以有未提�
 env http_proxy=http://127.0.0.1:8888 https_proxy=http://127.0.0.1:8888 \
     HTTP_PROXY=http://127.0.0.1:8888 HTTPS_PROXY=http://127.0.0.1:8888 \
     NO_PROXY=localhost,127.0.0.1,::1 no_proxy=localhost,127.0.0.1,::1 \
-    .venv/bin/codidator run demo-add
+    .venv/bin/codinator run demo-add
 ```
 
 遇到 `Process exceeded wall-clock budget`，先查看最新 attempt 中 `pi/result.json`、
@@ -112,12 +118,12 @@ Codex 根据原契约、真实代码、测试质量、快照和执行记录决�
 Pi 自身可按其重试策略处理瞬时服务错误；调度器不盲目重发可能已经执行过的 prompt。
 
 ```bash
-.venv/bin/codidator pause demo-add
-.venv/bin/codidator resume demo-add
-.venv/bin/codidator run demo-add
+.venv/bin/codinator pause demo-add
+.venv/bin/codinator resume demo-add
+.venv/bin/codinator run demo-add
 # 墙钟预算含暂停时间；需要延长时显式授权：
-.venv/bin/codidator resume demo-add --extra-seconds 3600
-.venv/bin/codidator cancel demo-add
+.venv/bin/codinator resume demo-add --extra-seconds 3600
+.venv/bin/codinator cancel demo-add
 ```
 
 普通 `resume` 会创建新 attempt，从 Pi 开始重新走完整流程；旧记录不覆盖。
@@ -125,7 +131,7 @@ Pi 自身可按其重试策略处理瞬时服务错误；调度器不盲目重�
 旧任务保留发布时的显式预算，不随新版默认值变化。对已阻塞／暂停任务，可明确覆盖之后每个Pi／Codex进程的上限：
 
 ```bash
-.venv/bin/codidator resume TASK_ID --attempt-seconds 7200 --extra-seconds 14400
+.venv/bin/codinator resume TASK_ID --attempt-seconds 7200 --extra-seconds 14400
 ```
 
 这给本任务设置7200秒单次上限，并延长总截止时间14400秒；若旧截止时间已过，则从恢复时起给四小时。
@@ -138,8 +144,8 @@ Pi 自身可按其重试策略处理瞬时服务错误；调度器不盲目重�
 若 Pi 已完整交付、所有必需检查通过，仅 Codex 因额度／连接／进程中断而未完成审计，可显式只恢复审计：
 
 ```bash
-.venv/bin/codidator resume TASK_ID --review-only --extra-seconds 3600
-.venv/bin/codidator status TASK_ID
+.venv/bin/codinator resume TASK_ID --review-only --extra-seconds 3600
+.venv/bin/codinator status TASK_ID
 ```
 
 这里额外授权3600秒墙钟预算；仍有足够余额时可省略 `--extra-seconds`。后台服务启用时恢复命令即入队，
@@ -164,7 +170,7 @@ Pi 自身可按其重试策略处理瞬时服务错误；调度器不盲目重�
 `handoff` 是只读契约，不允许出现在 `allowed_paths` 内。执行者写独立的本轮汇总，
 SQLite 是状态的唯一来源；本版不自动改写项目 README／交接文档中的状态。
 接入已有 KMesh 任务前，应由 Codex 修订旧的“Pi 修改状态和报告路径”约定及范围检查器；
-不能让 Pi 绕过旧冻结清单。Codidator 本身不修改 KMesh。
+不能让 Pi 绕过旧冻结清单。Codinator 本身不修改 KMesh。
 
 - `allowed_paths`：精确文件，或以 `/` 结尾的目录；不支持通配符，不允许 `.git`／`.codex`／`.agents`。
 - `checks[].argv`：参数数组，直接启动进程，不经过隐式 shell。检查在只读工作树中运行；临时产物写 `/tmp`。
@@ -173,11 +179,11 @@ SQLite 是状态的唯一来源；本版不自动改写项目 README／交接文
 - `notify_thread`：可选，用户明确指定的 Codex 会话 ID。未设置时保留本地通知，不向外发送。
 
 新任务需要单独 worktree 时先人工／Codex 创建，明确环境与基线，再发布。
-Codidator 不自动创建工作树或搬迁虚拟环境，避免隐式丢失未提交文件及破坏绝对路径契约。
+Codinator 不自动创建工作树或搬迁虚拟环境，避免隐式丢失未提交文件及破坏绝对路径契约。
 
 ## 证据与权限
 
-默认状态目录 `~/.local/state/codidator`；可用 `--state-dir` 或 `CODIDATOR_STATE_DIR` 指定。
+默认状态目录 `~/.local/state/codinator`；可用 `--state-dir` 或 `CODINATOR_STATE_DIR` 指定。
 必须在任务工作树之外，不应提交到 Git。目录权限为 0700。
 
 ```text
@@ -217,11 +223,11 @@ Codex 也有外层进程隔离，工作树只读，CLI 内层显式 `--sandbox r
 
 ```bash
 mkdir -p ~/.config/systemd/user
-.venv/bin/codidator service > ~/.config/systemd/user/codidator.service
+.venv/bin/codinator service > ~/.config/systemd/user/codinator.service
 systemctl --user daemon-reload
-systemctl --user enable --now codidator.service
-systemctl --user status codidator.service
-journalctl --user -u codidator.service
+systemctl --user enable --now codinator.service
+systemctl --user status codinator.service
+journalctl --user -u codinator.service
 ```
 
 服务只执行明确发布到默认状态目录的任务。不同状态目录需生成对应 service 参数。
@@ -229,7 +235,7 @@ journalctl --user -u codidator.service
 注销后继续运行取决于本机 user service／linger 设置；程序不修改系统级策略。
 
 配置 `notify_thread` 后，以 `codex queue` 排队发送通过／阻塞通知。SQLite 终态与通知入队
-在同一事务中完成。发送失败不会回滚验收；`codidator notify` 可重试。
+在同一事务中完成。发送失败不会回滚验收；`codinator notify` 可重试。
 发送采用至少一次语义，消息含稳定事件 ID；极端崩溃时可能重复，接收方应按 ID 去重。
 CLI 排队成功不代表用户已读；自动审计不依赖通知通道或当前聊天窗口。
 

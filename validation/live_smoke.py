@@ -10,11 +10,11 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from codidator.config import load_manifest
-from codidator.engine import Engine
-from codidator.store import Store
+from codinator.config import load_manifest
+from codinator.engine import Engine
+from codinator.store import Store
 
-base = Path(tempfile.mkdtemp(prefix='codidator-live-', dir='/home/mye/data'))
+base = Path(tempfile.mkdtemp(prefix='codinator-live-', dir='/home/mye/data'))
 workspace = base / 'workspace'
 workspace.mkdir()
 subprocess.run(['git', 'init', '-q', str(workspace)], check=True)

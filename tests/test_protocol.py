@@ -3,8 +3,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from codidator.agents import PiProtocol, validate_verdict
-from codidator.files import Problem
+from codinator.agents import PiProtocol, validate_verdict
+from codinator.files import Problem
 
 
 class ProtocolTests(unittest.TestCase):

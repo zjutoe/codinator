@@ -1,0 +1,83 @@
+{
+  "date": "2026-09-28",
+  "name": "codinator",
+  "baseline_commit": "cfb0049a56b4e8a4499c3076dfa665f554d1f42c",
+  "initial_naming_commit": "5aecf78",
+  "scope": "Package, distribution, CLI, environment variables, state/lock names, UI, docs and tests renamed consistently.",
+  "python_tests": 85,
+  "node_tests": 8,
+  "checks": {
+    "python-tests": {
+      "argv": [
+        "/home/mye/src/llm/codinator/.venv/bin/python",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-v"
+      ],
+      "exit_code": 0,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "8d77cd2a32c0ba8c551accbabba998be1ead6be98ba7c8ffa424373a14dbb06e"
+    },
+    "node-tests": {
+      "argv": [
+        "node",
+        "--test",
+        "tests/pi_extension.test.mjs"
+      ],
+      "exit_code": 0,
+      "stdout_sha256": "1a4c71011e65a659cebf933313b29a273b621e974b464c934cfb1f2a9318ec19",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "native-sandbox": {
+      "argv": [
+        "/home/mye/src/llm/codinator/.venv/bin/python",
+        "validation/native_sandbox.py"
+      ],
+      "exit_code": 0,
+      "stdout_sha256": "4aa845cb7bbe1937a2d2adafd9d700370cb0aa6be423020de74e61ff37f9891b",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "doctor": {
+      "argv": [
+        "/home/mye/src/llm/codinator/.venv/bin/codinator",
+        "--state-dir",
+        "/tmp/codinator-rename-xnvuml/doctor-state",
+        "doctor"
+      ],
+      "exit_code": 2,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "606a194503e4b8e359e94f520f65dfad36b705bd9d8602f86748ed10deea416e"
+    },
+    "doctor-recheck": {
+      "argv": [
+        "/home/mye/src/llm/codinator/.venv/bin/codinator",
+        "--state-dir",
+        "/tmp/codinator-rename-xnvuml/doctor-state-r2",
+        "doctor"
+      ],
+      "exit_code": 0,
+      "stdout_sha256": "9399f3bafb25f8fc183e20f38b8be1e615e4b61aab17346022f4223e36ebd4c6",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "evidence_dir": "/tmp/codinator-rename-xnvuml",
+  "independent_review": {
+    "result": "no blocking findings",
+    "targeted_tests": 16,
+    "additional_checks": [
+      "baseline SQLite state and evidence readable unchanged via explicit --state-dir",
+      "workspace lock rejects duplicate dispatch",
+      "9 historical display records match original and normalized hashes"
+    ]
+  },
+  "installed_command": "/home/mye/.local/bin/codinator",
+  "environment_correction": "Pi 0.87.1 package was present without a PATH entry; created ~/.local/bin/pi pointing to its declared CLI. No model configuration changes.",
+  "historical_evidence": "validation/name-migration.json pins immutable Git originals and normalized display records.",
+  "real_model_calls": false,
+  "services_enabled": false,
+  "tasks_submitted": false,
+  "commit_push_merge": "not performed"
+}

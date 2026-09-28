@@ -9,11 +9,11 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from codidator.agents import reviewer
-from codidator.files import digest, snapshot, write_json
-from codidator.sandbox import Sandbox
+from codinator.agents import reviewer
+from codinator.files import digest, snapshot, write_json
+from codinator.sandbox import Sandbox
 
-base = Path(tempfile.mkdtemp(prefix='codidator-review-live-', dir='/home/mye/data'))
+base = Path(tempfile.mkdtemp(prefix='codinator-review-live-', dir='/home/mye/data'))
 root = base / 'workspace'
 root.mkdir()
 subprocess.run(['git', 'init', '-q', str(root)], check=True)

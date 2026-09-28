@@ -13,14 +13,14 @@
       "change": "remove blank lines at EOF only"
     },
     {
-      "path": "src/codidator/__init__.py",
+      "path": "src/codinator/__init__.py",
       "before_sha256": "faea724e1243c5940ae04dcabd7a429911b7abe2da9970500bce3998559c336d",
       "after_sha256": "2258711ebca3abaf6482f73285df25015ef62c4be8443b90183d326dedda931c",
       "change": "remove blank lines at EOF only",
       "python_ast_equal": true
     },
     {
-      "path": "src/codidator/__main__.py",
+      "path": "src/codinator/__main__.py",
       "before_sha256": "76fa916e93e0ae1a6c1bb51dcc0bcf289c014e9f760a47165f8a84401ccf41d7",
       "after_sha256": "935a1c1166b0c1ea35a82256345000bf2c73ded718d77773bc27a71ecce28f7d",
       "change": "remove blank lines at EOF only",

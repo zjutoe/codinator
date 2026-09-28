@@ -6,8 +6,8 @@ import tempfile
 import time
 import unittest
 
-from codidator.files import Problem
-from codidator.process import Interrupted, run_process
+from codinator.files import Problem
+from codinator.process import Interrupted, run_process
 
 
 class ProcessTests(unittest.TestCase):

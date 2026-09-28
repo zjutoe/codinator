@@ -86,7 +86,7 @@ class Engine:
                 raise Problem('Previous process exit is unconfirmed; dispatch refused')
             if task['state'] not in ('ready', 'review_ready', 'needs_changes'):
                 raise Problem(f"Task is {task['state']}; cannot dispatch")
-            repo_lock = Path('/tmp') / f"codidator-{os.getuid()}-{digest(task['manifest']['workspace'])}.lock"
+            repo_lock = Path('/tmp') / f"codinator-{os.getuid()}-{digest(task['manifest']['workspace'])}.lock"
             with lock(repo_lock):
                 self._loop(task_id)
 

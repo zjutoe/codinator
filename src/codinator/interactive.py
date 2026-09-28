@@ -135,7 +135,7 @@ class Interactive:
         if self.thread and self.thread.is_alive():
             raise Problem('Previous review is still stopping')
         self.cancel.clear()
-        self.thread = threading.Thread(target=self._run, name='codidator-review', daemon=True)
+        self.thread = threading.Thread(target=self._run, name='codinator-review', daemon=True)
         self.thread.start()
 
     def _pid(self, pid=None, start=None):

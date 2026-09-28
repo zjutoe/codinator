@@ -53,7 +53,7 @@ class Handler(socketserver.StreamRequestHandler):
 def pi_environment(config, socket):
     env = {key: value for key, value in os.environ.items() if not key.lower().endswith('_proxy')}
     env.update({'PI_CODING_AGENT_DIR': str(config), 'PI_OFFLINE': '1', 'PYTHONDONTWRITEBYTECODE': '1',
-                'NO_PROXY': '*', 'no_proxy': '*', 'NODE_USE_ENV_PROXY': '0', 'CODIDATOR_PI_SOCKET': str(socket)})
+                'NO_PROXY': '*', 'no_proxy': '*', 'NODE_USE_ENV_PROXY': '0', 'CODINATOR_PI_SOCKET': str(socket)})
     return env
 
 
@@ -84,7 +84,7 @@ def terminal_process(argv, *, cwd, env):
 
 def launch(state_dir, target, *, resume=False, pi_bin='pi', codex_bin='codex'):
     if not sys.stdin.isatty() or not sys.stdout.isatty():
-        raise Problem('codidator pi requires an interactive terminal')
+        raise Problem('codinator pi requires an interactive terminal')
     state = Path(state_dir).expanduser().resolve() / 'interactive'
     manifest = load_manifest(target) if Path(target).is_file() else None
     s = Store(state)
@@ -99,7 +99,7 @@ def launch(state_dir, target, *, resume=False, pi_bin='pi', codex_bin='codex'):
             m = manifest
         else:
             raise Problem('Unknown interactive task; launch with its manifest first')
-        repo_lock = Path('/tmp') / f"codidator-{os.getuid()}-{digest(m['workspace'])}.lock"
+        repo_lock = Path('/tmp') / f"codinator-{os.getuid()}-{digest(m['workspace'])}.lock"
         with lock(repo_lock):
             sandbox = Sandbox()
             if not existing:
@@ -111,7 +111,7 @@ def launch(state_dir, target, *, resume=False, pi_bin='pi', codex_bin='codex'):
             private = state / 'private' / task_id
             private.mkdir(parents=True, mode=0o700, exist_ok=True)
             # Short path keeps Unix socket names below Linux's 108-byte limit.
-            with tempfile.TemporaryDirectory(prefix='codidator-ui-', dir=Path.home() / '.cache') as socket_dir:
+            with tempfile.TemporaryDirectory(prefix='codinator-ui-', dir=Path.home() / '.cache') as socket_dir:
                 sock = Path(socket_dir) / 'bridge.sock'
                 with Bridge(sock, controller) as server:
                     thread = threading.Thread(target=server.serve_forever, daemon=True)

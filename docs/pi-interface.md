@@ -2,7 +2,7 @@
 
 一次明确启动已发布的任务后，Pi + `bonsai/bonsai2-27b/xhigh` 可自动实施、提交、等待 Codex、返工和再次提交。只有独立 Codex 的 `accepted` 可结束验收；无需逐轮用户确认。轮次耗尽、范围/证据变化、服务故障或用户中止会暂停，不保证任何任务必然被接受。
 
-入口为 `codidator pi MANIFEST`，恢复为 `codidator pi TASK_ID --resume`。用户直接看到原生 Pi TUI；控制器在旁路运行，没有第二个无头 Pi。`/codex-pause` 中断自动循环，`/codex-resume` 显式恢复，`/codex-status` 查看证据路径。原有 run/serve 继续兼容，两种入口使用相同的工作目录互斥锁，但状态位于独立 `interactive/` 子目录，旧后台服务不会接管交互任务。
+入口为 `codinator pi MANIFEST`，恢复为 `codinator pi TASK_ID --resume`。用户直接看到原生 Pi TUI；控制器在旁路运行，没有第二个无头 Pi。`/codex-pause` 中断自动循环，`/codex-resume` 显式恢复，`/codex-status` 查看证据路径。原有 run/serve 继续兼容，两种入口使用相同的工作目录互斥锁，但状态位于独立 `interactive/` 子目录，旧后台服务不会接管交互任务。
 
 Pi 扩展只注册任务提交工具和上述命令。提交工具接收 Markdown 正式总结，先终止本批工具后的自动续答，在 `agent_settled` 后提交，避免并行工具未写完时快照。后台生成带任务、轮次、快照摘要的 `submission.md`，程序记录提交成功；不依赖模型另写 completion.json。同一提交 ID 重复发送不会重复派发审查。
 

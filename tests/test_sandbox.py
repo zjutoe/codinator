@@ -3,8 +3,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from codidator.files import Problem
-from codidator.sandbox import Sandbox
+from codinator.files import Problem
+from codinator.sandbox import Sandbox
 
 
 class SandboxTests(unittest.TestCase):

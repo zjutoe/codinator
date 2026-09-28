@@ -8,10 +8,10 @@ import unittest
 from unittest.mock import patch
 
 import test_engine
-from codidator.files import Problem, digest, snapshot
-from codidator.foreground import Bridge, pi_environment
-from codidator.interactive import Interactive
-from codidator.store import Store
+from codinator.files import Problem, digest, snapshot
+from codinator.foreground import Bridge, pi_environment
+from codinator.interactive import Interactive
+from codinator.store import Store
 
 RUNTIME = {'provider': 'bonsai', 'model': 'bonsai2-27b', 'thinking': 'xhigh'}
 
@@ -48,7 +48,7 @@ class InteractiveTests(unittest.TestCase):
     def test_lost_ack_duplicate_is_idempotent_and_different_body_rejected(self):
         self.submit()
         self.finish()
-        with patch('codidator.interactive.reviewer', side_effect=AssertionError('duplicate review')):
+        with patch('codinator.interactive.reviewer', side_effect=AssertionError('duplicate review')):
             self.assertEqual(self.submit()['attempt'], 1)
         with self.assertRaisesRegex(Problem, 'different content'):
             self.submit(text='changed')
@@ -78,7 +78,7 @@ class InteractiveTests(unittest.TestCase):
 
     def test_check_failure_returns_automatic_rework_without_codex(self):
         (self.workspace / 'product.py').write_text('VALUE = -1\n')
-        with patch('codidator.interactive.reviewer', side_effect=AssertionError('must not review')):
+        with patch('codinator.interactive.reviewer', side_effect=AssertionError('must not review')):
             self.submit()
             t = self.finish()
         self.assertEqual(t['state'], 'needs_changes')
@@ -100,7 +100,7 @@ class InteractiveTests(unittest.TestCase):
         first = self.ui.task_dir() / 'attempt-0001'
         old = self.ui._evidence_digest(first)
         os.environ['FAKE_MODE'] = 'accept'
-        with patch('codidator.interactive.run_process', side_effect=AssertionError('checks must not replay')):
+        with patch('codinator.interactive.run_process', side_effect=AssertionError('checks must not replay')):
             self.ui.resume()
             self.assertEqual(self.finish()['state'], 'accepted')
         self.assertEqual(self.ui._evidence_digest(first), old)
@@ -127,7 +127,7 @@ class InteractiveTests(unittest.TestCase):
             entered.set()
             self.assertTrue(release.wait(5))
             return {'verdict': 'accepted', 'summary': 'late result', 'issues': []}
-        with patch('codidator.interactive.reviewer', side_effect=fake_review):
+        with patch('codinator.interactive.reviewer', side_effect=fake_review):
             self.submit()
             self.assertTrue(entered.wait(5))
             self.ui.pause()
@@ -146,8 +146,8 @@ class InteractiveTests(unittest.TestCase):
         self.assertEqual(self.finish()['state'], 'accepted')
 
     def test_interrupted_check_can_retry_in_new_attempt(self):
-        from codidator.process import Interrupted
-        with patch('codidator.interactive.run_process', side_effect=Interrupted('interrupted')):
+        from codinator.process import Interrupted
+        with patch('codinator.interactive.run_process', side_effect=Interrupted('interrupted')):
             self.submit()
             self.assertEqual(self.finish()['state'], 'blocked')
         self.ui.resume()
@@ -167,13 +167,14 @@ class InteractiveTests(unittest.TestCase):
     def test_foreground_proxy_split_does_not_change_parent_environment(self):
         with patch.dict(os.environ, {'https_proxy': 'http://localhost:8888', 'ALL_PROXY': 'proxy'}):
             env = pi_environment('/config', '/bridge')
+            self.assertEqual(env['CODINATOR_PI_SOCKET'], '/bridge')
             self.assertNotIn('https_proxy', env)
             self.assertNotIn('ALL_PROXY', env)
             self.assertEqual(env['NO_PROXY'], '*')
             self.assertEqual(os.environ['https_proxy'], 'http://localhost:8888')
 
     def test_unexpected_worker_exception_is_durable_blocked(self):
-        with patch('codidator.interactive.reviewer', side_effect=TypeError('unexpected boundary failure')):
+        with patch('codinator.interactive.reviewer', side_effect=TypeError('unexpected boundary failure')):
             self.submit()
             result = self.finish()
         self.assertEqual(result['state'], 'blocked')
@@ -211,7 +212,7 @@ class InteractiveTests(unittest.TestCase):
             review_entered.set()
             release_review.wait(5)
             return {'verdict': 'accepted', 'summary': 'late', 'issues': []}
-        with patch.object(self.ui, '_spawn', side_effect=spawn), patch('codidator.interactive.reviewer', side_effect=review):
+        with patch.object(self.ui, '_spawn', side_effect=spawn), patch('codinator.interactive.reviewer', side_effect=review):
             submitter = threading.Thread(target=self.submit)
             submitter.start()
             self.assertTrue(before_spawn.wait(5))
@@ -225,14 +226,14 @@ class InteractiveTests(unittest.TestCase):
         self.assertFalse((self.ui.task_dir() / 'attempt-0001/outcome.json').exists())
 
     def test_resume_crash_does_not_reuse_orphan_review_directory(self):
-        from codidator.files import write_json as original
+        from codinator.files import write_json as original
         os.environ['FAKE_MODE'] = 'codex-unavailable'
         self.submit(); self.finish()
         def crash(path, value):
             original(path, value)
             if Path(path).name == 'review-source.json':
                 raise RuntimeError('crash before resume state commit')
-        with patch('codidator.interactive.write_json', side_effect=crash):
+        with patch('codinator.interactive.write_json', side_effect=crash):
             with self.assertRaisesRegex(RuntimeError, 'resume state'):
                 self.ui.resume()
         old = (self.ui.task_dir() / 'attempt-0002/review-source.json').read_bytes()

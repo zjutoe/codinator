@@ -5,9 +5,9 @@ import subprocess
 import tempfile
 import unittest
 
-from codidator.config import load_manifest
-from codidator.files import Problem, assert_scope, changes, digest, preserve, snapshot, write_json
-from codidator.store import lock
+from codinator.config import load_manifest
+from codinator.files import Problem, assert_scope, changes, digest, preserve, snapshot, write_json
+from codinator.store import lock
 
 
 class FilesTests(unittest.TestCase):

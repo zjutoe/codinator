@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { install, connect } from '../src/codidator/pi_extension.mjs';
+import { install, connect } from '../src/codinator/pi_extension.mjs';
 import net from 'node:net';
 import { Duplex } from 'node:stream';
 import { syncBuiltinESMExports } from 'node:module';
@@ -49,7 +49,7 @@ test('complete automatic implementation, submit, needs_changes, resubmit, accept
     await h.start();
     assert.equal(h.messages.length, 1);
     assert.equal(h.messages[0].options.triggerTurn, true);
-    assert.equal(h.messages[0].message.customType, 'codidator-review');
+    assert.equal(h.messages[0].message.customType, 'codinator-review');
     await h.reserve();
     const result = await h.tools.codex_submit_review.execute('call-1', { summary: '# Delivery\nTests passed' });
     assert.equal(result.terminate, true);

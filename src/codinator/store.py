@@ -119,6 +119,6 @@ class Store:
     def _notify(self, task_id, message):
         task = self.get(task_id)
         event_id = f"{task_id}:{task['attempt']}:{task['state']}"
-        body = f"[codidator event {event_id}] {message}\n这是状态通知；同一事件ID只报告一次，不要据此重新执行任务。"
+        body = f"[codinator event {event_id}] {message}\n这是状态通知；同一事件ID只报告一次，不要据此重新执行任务。"
         self.db.execute("INSERT OR IGNORE INTO outbox(id,task_id,thread,message) VALUES(?,?,?,?)",
                         (event_id, task_id, task['manifest'].get('notify_thread'), body))

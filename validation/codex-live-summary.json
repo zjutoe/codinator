@@ -1,9 +1,9 @@
 {
-  "source": "/home/mye/data/codidator-review-live-dmhasr5p",
+  "source": "/home/mye/data/codinator-review-live-dmhasr5p",
   "adapter_outcome_original": {
     "verdict": "integration_failure",
     "reason": "Codex did not emit a successful turn completion",
-    "evidence_root": "/home/mye/data/codidator-review-live-dmhasr5p"
+    "evidence_root": "/home/mye/data/codinator-review-live-dmhasr5p"
   },
   "process_exit_code": 0,
   "process_elapsed_seconds": 250.46498608589172,

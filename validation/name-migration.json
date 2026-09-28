@@ -1,0 +1,53 @@
+{
+  "date": "2026-09-28",
+  "original_commit": "cfb0049a56b4e8a4499c3076dfa665f554d1f42c",
+  "status": "historical_display_only",
+  "note": "Names in these historical exports were normalized at the user request. Preserve original records via git show ORIGINAL_COMMIT:PATH. Recorded source hashes refer to the original source bytes, not renamed current files. External evidence directories were not moved; normalized historical paths are display aliases, not filesystem lookup paths. No historical checks or model runs were repeated by this transformation.",
+  "files": [
+    {
+      "path": "validation/attempt-timeout-summary.json",
+      "original_sha256": "538108ce87482557f93a05094b4f3e5174d9d825331c1edbe7e8a32ae46b95c7",
+      "display_sha256": "c33f5de4816a619f8064019301b61e59ca28046aead36e2d600451af79a494ce"
+    },
+    {
+      "path": "validation/codex-live-summary.json",
+      "original_sha256": "e733a083f0d85de6379d856c8fc5007c05f059889aa0f7c5e3512dffd1e38719",
+      "display_sha256": "5389a78b8b44b86de162a189623feb7733f8f22b1cfceee337b0553fe97087f4"
+    },
+    {
+      "path": "validation/commit-hygiene.json",
+      "original_sha256": "f3751af0b6b501aa798bb31ab55104157d5d8fe2ba598048d568fa729c9430e8",
+      "display_sha256": "f342737d49f8946de9bfbfe94c894ad8020ac90eb04024e588e300313ad3d0c4"
+    },
+    {
+      "path": "validation/live-pause-summary.json",
+      "original_sha256": "333565f648a6fd6140f851431e745851169b4fb72f2ba69bf19d8db2488d8582",
+      "display_sha256": "6fdaaa278dc2aff774690f00f8772dc5be7766358b1362019f962573c05c040c"
+    },
+    {
+      "path": "validation/live-proxy-recovery-summary.json",
+      "original_sha256": "f74bb11aa03154848e35b3b5cc3e15e0fb5206e3b32d1673dc06df9adfd3c60b",
+      "display_sha256": "c958d03557d9663ca72cbbca9c65ef79e67b4bb836c76ce929dfd3eed9da3d04"
+    },
+    {
+      "path": "validation/pi-interface-review.json",
+      "original_sha256": "385f176b364a52eb09878badb84c83e7f78ab29bd389c134444a5692bdc4ecf9",
+      "display_sha256": "e88898646e30f0e262a68fcaedfc322dfda95d27af06fe07d5a79a42089c98ff"
+    },
+    {
+      "path": "validation/pi-interface-summary.json",
+      "original_sha256": "b02b4fa388bcc57d1c4f109573cee221146bd45ac25aa72bc023230e47dbbe94",
+      "display_sha256": "05110710a4be0540dcfe1ddbb1fd21ec4403eac11d4cac0894f1f348a293368b"
+    },
+    {
+      "path": "validation/review-only-resume-summary.json",
+      "original_sha256": "d6a4e88846a02dc6c6b4a51336634d9ad4f858ecb16acbdb5a0fc046513184a1",
+      "display_sha256": "856daec5fa018ca2e3dc21a23c1b06e83cd21cee38308fce384d78172694764e"
+    },
+    {
+      "path": "validation/tested-files.json",
+      "original_sha256": "298eb41fce1a22e4d18620e81d0944e83fec51d3628c76a5d641748b05c846e6",
+      "display_sha256": "32d292318e268867a1ad4b0be54bdf10d6270dc91a81318ca7a940af92149ee8"
+    }
+  ]
+}

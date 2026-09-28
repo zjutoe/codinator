@@ -1,4 +1,4 @@
-# Codidator working agreements
+# Codinator working agreements
 
 - Preserve task contracts and immutable attempt evidence. Never replay an uncertain prompt.
 - Only the controller writes workflow state. Only an independent Codex verdict can accept work.

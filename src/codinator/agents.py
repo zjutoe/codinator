@@ -71,7 +71,7 @@ def worker(task, attempt_dir, private, sandbox, process_options, pi_bin="pi"):
     delivery = attempt_dir / "delivery"
     delivery.mkdir()
     config = pi_home(private / "pi")
-    prompt = f"""You are the IMPLEMENTER in a Codidator task, not its reviewer.
+    prompt = f"""You are the IMPLEMENTER in a Codinator task, not its reviewer.
 Task: {manifest['id']}; round {task['round']}; attempt {task['attempt']}.
 Read the published handoff at {root / manifest['handoff']} and applicable AGENTS.md.
 Only edit these workspace paths: {json.dumps(manifest['allowed_paths'])}.

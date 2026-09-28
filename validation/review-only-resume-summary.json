@@ -26,11 +26,11 @@
     "result": "PASS",
     "service_restarted": true,
     "files": {
-      "src/codidator/engine.py": "38021b1d34ea88cafc94615e9111889540d65955861b88d6bb50858a3315ddfc",
-      "src/codidator/store.py": "a6d0cbfe20c157b6976e0a86d728eb6cce80877c5520b395fa36260e083dedd6",
-      "src/codidator/review_resume.py": "c930418261bb0decc360cdb29b40d6aa5525b8f3887a4b3758a75afe1720e0e8",
-      "src/codidator/agents.py": "2513a18b877c5e932f639a8c7bf27244403b7762fd8984178372c1e324290b72",
-      "src/codidator/cli.py": "96ccfdebaa45f2284b05862181038929f40621ffff9253f187f4598eb0313422",
+      "src/codinator/engine.py": "38021b1d34ea88cafc94615e9111889540d65955861b88d6bb50858a3315ddfc",
+      "src/codinator/store.py": "a6d0cbfe20c157b6976e0a86d728eb6cce80877c5520b395fa36260e083dedd6",
+      "src/codinator/review_resume.py": "c930418261bb0decc360cdb29b40d6aa5525b8f3887a4b3758a75afe1720e0e8",
+      "src/codinator/agents.py": "2513a18b877c5e932f639a8c7bf27244403b7762fd8984178372c1e324290b72",
+      "src/codinator/cli.py": "96ccfdebaa45f2284b05862181038929f40621ffff9253f187f4598eb0313422",
       "tests/test_engine.py": "f7ae2a9eadf6b4abf75b140fe483ff0be614ab7e02d8c1826a4fa464168677f3",
       "tests/fake_agent.py": "a3c7971b03091c0e139ded7a093070b1657735e7dedccc99df70a281a659f395",
       "tests/test_cli.py": "d06c76debfaf0064056a1cb7dfe15920e65c601eba6591c60a12ccb1d4ac57b5",
@@ -47,27 +47,27 @@
   },
   "logs": {
     "pre_feature_failure": {
-      "file": "/home/mye/data/codidator-review-resume-validation/pre-fix.stderr",
+      "file": "/home/mye/data/codinator-review-resume-validation/pre-fix.stderr",
       "sha256": "b6c08780b82a4b96f908522dd68f72e41dda25dc9db01463b68898d3320fd019"
     },
     "first_full": {
-      "file": "/home/mye/data/codidator-review-resume-validation/full-r1.stderr",
+      "file": "/home/mye/data/codinator-review-resume-validation/full-r1.stderr",
       "sha256": "cad8808fb0fc9a77347508e825ad46c0c46ed40ba7c457727a1c603f30c2effb"
     },
     "strengthened_full": {
-      "file": "/home/mye/data/codidator-review-resume-validation/full-r2.stderr",
+      "file": "/home/mye/data/codinator-review-resume-validation/full-r2.stderr",
       "sha256": "67f9ae2254debf8e980a022efd222b0982d4c59055b8257108b2e25bd9d1a2a8"
     },
     "review_regression_before": {
-      "file": "/home/mye/data/codidator-review-resume-validation/review-P2-before.stderr",
+      "file": "/home/mye/data/codinator-review-resume-validation/review-P2-before.stderr",
       "sha256": "0fd9cf955e8245b3230430774e8f18681d8707e8901a444337259c24ba9e3da2"
     },
     "review_regression_after": {
-      "file": "/home/mye/data/codidator-review-resume-validation/review-P2-after.stderr",
+      "file": "/home/mye/data/codinator-review-resume-validation/review-P2-after.stderr",
       "sha256": "c61945b8adb64b84816a59bd7168334afb5e02c662a9dd813f40b7e936fe5a37"
     },
     "final_full": {
-      "file": "/home/mye/data/codidator-review-resume-validation/full-r3.stderr",
+      "file": "/home/mye/data/codinator-review-resume-validation/full-r3.stderr",
       "sha256": "294d3c1c81780756a8f3169bba670520a932983baa397fb9bd81989c3f9a2792"
     }
   },

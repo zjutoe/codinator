@@ -35,8 +35,8 @@ def notifications(store, codex_bin):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description='Codidator: Pi implementation and independent Codex acceptance')
-    parser.add_argument('--state-dir', default=os.environ.get('CODIDATOR_STATE_DIR', '~/.local/state/codidator'))
+    parser = argparse.ArgumentParser(description='Codinator: Pi implementation and independent Codex acceptance')
+    parser.add_argument('--state-dir', default=os.environ.get('CODINATOR_STATE_DIR', '~/.local/state/codinator'))
     parser.add_argument('--pi-bin', default='pi')
     parser.add_argument('--codex-bin', default='codex')
     sub = parser.add_subparsers(dest='command', required=True)
@@ -63,9 +63,9 @@ def main(argv=None):
             from .foreground import launch
             return launch(args.state_dir, args.target, resume=args.resume, pi_bin=args.pi_bin, codex_bin=args.codex_bin)
         if args.command == 'service':
-            exe = shutil.which('codidator') or str(Path(sys.executable).parent / 'codidator')
+            exe = shutil.which('codinator') or str(Path(sys.executable).parent / 'codinator')
             state = str(Path(args.state_dir).expanduser().resolve())
-            print('[Unit]\nDescription=Codidator task controller\nAfter=network-online.target\n\n[Service]')
+            print('[Unit]\nDescription=Codinator task controller\nAfter=network-online.target\n\n[Service]')
             # Explicit path captures the Node/Pi installation used during setup.
             print('Type=simple\nRestart=on-failure\nRestartSec=10\nKillMode=control-group\nTimeoutStopSec=15\nUMask=0077')
             def quote(value):
@@ -146,5 +146,5 @@ def main(argv=None):
     except KeyboardInterrupt:
         return 130
     except (Problem, OSError, ValueError, KeyError) as exc:
-        print(f'codidator: {exc}', file=sys.stderr)
+        print(f'codinator: {exc}', file=sys.stderr)
         return 2

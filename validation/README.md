@@ -1,5 +1,15 @@
 # 验证记录（更新至2026-09-26）
 
+## 2026-09-28 名称更正与历史原件
+
+本目录中的历史材料按用户要求统一了项目名称。发生文字替换的 JSON／日志现在是**名称规范化展示件**，
+不再视为当时输出的原始字节；原提交、原件 SHA-256 与展示件 SHA-256 见 [name-migration.json](name-migration.json)。
+原件完整保留在提交 `cfb0049a56b4e8a4499c3076dfa665f554d1f42c`，例如可用
+`git show cfb0049a56b4e8a4499c3076dfa665f554d1f42c:validation/tested-files.json` 读取。
+历史源码哈希仍描述当时版本，不是当前改名源码的验收哈希；未重算它们来冒充本轮验收。
+历史外部路径中的名称只作展示更正，对应目录未搬迁，实际定位以原件为准。
+下文的测试、服务和模型运行情况均为历史记录，不能据此推断当前环境或改名版本已经完成真实模型联调。
+
 ## 本地测试与审查
 
 - 最终代码：`tests-r5.stderr`，38 项测试通过，45.315 秒，无跳过。
@@ -18,17 +28,17 @@
 
 真实运行目录在 `/home/mye/data/`，包含私有认证副本和原始工具输出，不进入代码仓库。
 
-1. `codidator-live-2t64yxcz`：Pi 继承代理而连接失败，控制器正确标记 blocked。
+1. `codinator-live-2t64yxcz`：Pi 继承代理而连接失败，控制器正确标记 blocked。
    随后按用户指示改为 Pi 直连本机，Codex 保留代理。
-2. `codidator-live-2h3hzypf`：Pi 已成功读取契约并调用工具，随后达到 420 秒阶段预算。
+2. `codinator-live-2h3hzypf`：Pi 已成功读取契约并调用工具，随后达到 420 秒阶段预算。
    控制器停止进程并标记 blocked。同期服务唯一槽位处理约 18～20 万 token 请求；
    排队/共享服务竞争是推断，不能仅据此认定其他请求的来源。
-3. `codidator-review-live-dmhasr5p`：独立 Codex 示例真实返回 accepted，进行了源码检查
+3. `codinator-review-live-dmhasr5p`：独立 Codex 示例真实返回 accepted，进行了源码检查
    和 1,000 次隔离调用。该示例由控制器构造，不是 Pi 交付，也不是完整闭环。
    原适配器误把重连中的 error 诊断当最终失败；修复后要求 exit 0、turn.completed、
    无 turn.failed 及有效且摘要匹配的结论。原始失败不改写，回归在最终 38 项中。
    脱敏摘要见 [codex-live-summary.json](codex-live-summary.json)。
-4. `codidator-live-_fn0my19`：阶段预算 1,200 秒的完整闭环试跑。用户确认另有 Pi 长任务
+4. `codinator-live-_fn0my19`：阶段预算 1,200 秒的完整闭环试跑。用户确认另有 Pi 长任务
    使用同一 Bonsai，并要求等待它结束。本轮按用户指示暂停，实际状态为 paused，
    原因为 `Pause/cancel requested`，未完成实现/验收。暂停后进程已收尾，记录保留。
    实施模型继续使用 `bonsai2-27b`。脱敏记录见 [live-pause-summary.json](live-pause-summary.json)。
@@ -57,8 +67,8 @@ KMesh接入已验证。原始材料在上述state目录；可分享的摘要见
 
 ## 本机安装
 
-代码安装于 `/home/mye/src/llm/codidator`，虚拟环境内 editable 安装，无运行时第三方依赖。
-`codidator doctor` 通过。用户级 `codidator.service` 已启用，默认队列为空。
+代码安装于 `/home/mye/src/llm/codinator`，虚拟环境内 editable 安装，无运行时第三方依赖。
+`codinator doctor` 通过。用户级 `codinator.service` 已启用，默认队列为空。
 服务保存本机 Codex 代理，Pi 直连规则在派生进程单独生效。未修改全局模型/代理配置。
 
 KMesh 工作树未被本项目实施或联调修改。本次2026-09-26排障仅更新操作说明与脱敏证据，未commit/push。

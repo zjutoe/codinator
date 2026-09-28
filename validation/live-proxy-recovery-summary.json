@@ -1,7 +1,7 @@
 {
   "date": "2026-09-26",
   "task_id": "live-smoke",
-  "state_root": "/home/mye/data/codidator-live-_fn0my19/state",
+  "state_root": "/home/mye/data/codinator-live-_fn0my19/state",
   "recovery": "Explicit HTTP/HTTPS proxy environment for the controller; Pi strips proxy variables and remains direct. Original artifacts unchanged; new attempt used.",
   "attempts": [
     {

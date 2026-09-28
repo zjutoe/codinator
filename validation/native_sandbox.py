@@ -7,10 +7,10 @@ import sys
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from codidator.files import Problem
-from codidator.sandbox import Sandbox
+from codinator.files import Problem
+from codinator.sandbox import Sandbox
 
-with tempfile.TemporaryDirectory(prefix='codidator-native-') as name:
+with tempfile.TemporaryDirectory(prefix='codinator-native-') as name:
     root = Path(name)
     workspace = root / 'workspace'
     evidence = root / 'evidence'
