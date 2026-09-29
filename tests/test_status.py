@@ -71,6 +71,7 @@ class StatusTests(unittest.TestCase):
     def test_status_reads_old_schema_without_migration(self):
         self.store.db.execute('ALTER TABLE tasks DROP COLUMN review_resume')
         self.store.db.execute('ALTER TABLE tasks DROP COLUMN attempt_seconds_override')
+        self.store.db.execute('ALTER TABLE tasks DROP COLUMN integration')
         self.store.db.commit()
         before = list(self.store.db.iterdump())
         self.assertEqual(self.status()['attempt_seconds'], self.manifest['attempt_seconds'])

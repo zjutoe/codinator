@@ -1,0 +1,187 @@
+test_another_violation_prevents_cleanup_and_review (test_background_interface.BackgroundInterfaceTests.test_another_violation_prevents_cleanup_and_review) ... ok
+test_archive_failure_blocks_before_review_and_retains_bytes (test_background_interface.BackgroundInterfaceTests.test_archive_failure_blocks_before_review_and_retains_bytes) ... ok
+test_completed_worker_archives_new_caches_before_freezing (test_background_interface.BackgroundInterfaceTests.test_completed_worker_archives_new_caches_before_freezing) ... ok
+test_frozen_review_never_cleans_new_caches (test_background_interface.BackgroundInterfaceTests.test_frozen_review_never_cleans_new_caches) ... ok
+test_pause_during_preflight_prevents_dispatch (test_background_interface.BackgroundInterfaceTests.test_pause_during_preflight_prevents_dispatch) ... ok
+test_pause_or_cancel_wins_over_late_verdict (test_background_interface.BackgroundInterfaceTests.test_pause_or_cancel_wins_over_late_verdict) ... ok
+test_publication_and_concurrent_pause_are_serialized (test_background_interface.BackgroundInterfaceTests.test_publication_and_concurrent_pause_are_serialized) ... ok
+test_service_reworks_after_frontend_exits_and_queries_do_not_pause (test_background_interface.BackgroundInterfaceTests.test_service_reworks_after_frontend_exits_and_queries_do_not_pause) ... ok
+test_archive_failure_does_not_remove_caches (test_bytecode.BytecodeTests.test_archive_failure_does_not_remove_caches) ... ok
+test_archive_precedes_cleanup_and_original_bytes_remain (test_bytecode.BytecodeTests.test_archive_precedes_cleanup_and_original_bytes_remain) ... ok
+test_concurrent_change_is_refused_before_removing_anything (test_bytecode.BytecodeTests.test_concurrent_change_is_refused_before_removing_anything) ... ok
+test_fake_header_symlink_hardlink_or_unmatched_source_is_rejected (test_bytecode.BytecodeTests.test_fake_header_symlink_hardlink_or_unmatched_source_is_rejected) ... ok
+test_hardlink_added_after_archive_is_rejected_before_move (test_bytecode.BytecodeTests.test_hardlink_added_after_archive_is_rejected_before_move) ... ok
+test_interrupted_move_retains_full_before_snapshot_and_all_bytes (test_bytecode.BytecodeTests.test_interrupted_move_retains_full_before_snapshot_and_all_bytes) ... ok
+test_modified_baseline_cache_is_not_cleaned (test_bytecode.BytecodeTests.test_modified_baseline_cache_is_not_cleaned) ... ok
+test_other_violation_prevents_all_cleanup_even_when_gitignored (test_bytecode.BytecodeTests.test_other_violation_prevents_all_cleanup_even_when_gitignored) ... ok
+test_second_move_failure_keeps_first_archived_and_second_in_place (test_bytecode.BytecodeTests.test_second_move_failure_keeps_first_archived_and_second_in_place) ... ok
+test_resume_explicit_attempt_override (test_cli.CliTests.test_resume_explicit_attempt_override) ... ok
+test_resume_rejects_nonpositive_override_without_dispatch (test_cli.CliTests.test_resume_rejects_nonpositive_override_without_dispatch) ... ok
+test_review_only_flag_is_explicit_and_preserves_extra_budget (test_cli.CliTests.test_review_only_flag_is_explicit_and_preserves_extra_budget) ... FAIL
+test_service_uses_installed_command_and_explicit_state (test_cli.CliTests.test_service_uses_installed_command_and_explicit_state) ... ok
+test_state_directory_selection (test_cli.CliTests.test_state_directory_selection) ... ok
+test_user_service_preserves_codex_proxy (test_cli.CliTests.test_user_service_preserves_codex_proxy) ... ok
+test_bad_review_exit_or_digest_or_concurrent_mutation_never_accepts (test_engine.EngineTests.test_bad_review_exit_or_digest_or_concurrent_mutation_never_accepts) ... ok
+test_codex_reconnection_diagnostic_then_terminal_success (test_engine.EngineTests.test_codex_reconnection_diagnostic_then_terminal_success) ... ok
+test_complete_acceptance_evidence_and_no_git_commit (test_engine.EngineTests.test_complete_acceptance_evidence_and_no_git_commit) ... ok
+test_deadline_expiry_between_worker_and_checks_never_launches_next_process (test_engine.EngineTests.test_deadline_expiry_between_worker_and_checks_never_launches_next_process) ... ok
+test_failed_checkpoint_does_not_change_override_or_deadline (test_engine.EngineTests.test_failed_checkpoint_does_not_change_override_or_deadline) ... ok
+test_failed_required_check_does_not_accept (test_engine.EngineTests.test_failed_required_check_does_not_accept) ... ok
+test_invalid_resume_budget_does_not_recover_or_mutate (test_engine.EngineTests.test_invalid_resume_budget_does_not_recover_or_mutate) ... ok
+test_new_default_budget_preserves_explicit_old_budget (test_engine.EngineTests.test_new_default_budget_preserves_explicit_old_budget) ... ok
+test_notification_failure_does_not_rollback_acceptance (test_engine.EngineTests.test_notification_failure_does_not_rollback_acceptance) ... ok
+test_old_database_migration_preserves_legacy_task_and_checks (test_engine.EngineTests.test_old_database_migration_preserves_legacy_task_and_checks) ... ok
+test_override_persists_after_restart_and_rework (test_engine.EngineTests.test_override_persists_after_restart_and_rework) ... ok
+test_override_still_caps_both_agents_by_total_deadline (test_engine.EngineTests.test_override_still_caps_both_agents_by_total_deadline) ... ok
+test_pause_before_dispatch (test_engine.EngineTests.test_pause_before_dispatch) ... ok
+test_pi_bypasses_proxy_and_codex_retains_it (test_engine.EngineTests.test_pi_bypasses_proxy_and_codex_retains_it) ... ok
+test_real_timeout_then_resume_preserves_manifest_and_old_evidence (test_engine.EngineTests.test_real_timeout_then_resume_preserves_manifest_and_old_evidence) ... ok
+test_recovery_does_not_adopt_review_mutations (test_engine.EngineTests.test_recovery_does_not_adopt_review_mutations) ... ok
+test_recovery_marks_uncertain_without_replaying (test_engine.EngineTests.test_recovery_marks_uncertain_without_replaying) ... ok
+test_repeated_issue_ids_use_published_round_budget (test_engine.EngineTests.test_repeated_issue_ids_use_published_round_budget) ... ok
+test_review_only_expired_budget_does_not_launch_and_extension_allows_review (test_engine.EngineTests.test_review_only_expired_budget_does_not_launch_and_extension_allows_review) ... ok
+test_review_only_malformed_snapshot_blocks_without_service_crash (test_engine.EngineTests.test_review_only_malformed_snapshot_blocks_without_service_crash) ... ok
+test_review_only_mounts_original_and_current_evidence (test_engine.EngineTests.test_review_only_mounts_original_and_current_evidence) ... ok
+test_review_only_needs_changes_returns_to_normal_implementation (test_engine.EngineTests.test_review_only_needs_changes_returns_to_normal_implementation) ... ok
+test_review_only_override_keeps_eligibility_gate_and_skips_pi (test_engine.EngineTests.test_review_only_override_keeps_eligibility_gate_and_skips_pi) ... ok
+test_review_only_rechecks_evidence_after_review (test_engine.EngineTests.test_review_only_rechecks_evidence_after_review) ... ok
+test_review_only_rechecks_evidence_at_dispatch (test_engine.EngineTests.test_review_only_rechecks_evidence_at_dispatch) ... ok
+test_review_only_recover_crash_after_attempt_allocation (test_engine.EngineTests.test_review_only_recover_crash_after_attempt_allocation) ... ok
+test_review_only_recovery_rejects_workspace_drift (test_engine.EngineTests.test_review_only_recovery_rejects_workspace_drift) ... ok
+test_review_only_refuses_attempt_that_never_reached_review (test_engine.EngineTests.test_review_only_refuses_attempt_that_never_reached_review) ... ok
+test_review_only_refuses_existing_verdict_even_without_outcome (test_engine.EngineTests.test_review_only_refuses_existing_verdict_even_without_outcome) ... ok
+test_review_only_refuses_incomplete_or_changed_check_evidence (test_engine.EngineTests.test_review_only_refuses_incomplete_or_changed_check_evidence) ... ok
+test_review_only_refuses_missing_checks_and_outcomes (test_engine.EngineTests.test_review_only_refuses_missing_checks_and_outcomes) ... ok
+test_review_only_requires_complete_pi_protocol_not_just_zero_exit (test_engine.EngineTests.test_review_only_requires_complete_pi_protocol_not_just_zero_exit) ... ok
+test_review_only_reuses_checked_submission_without_worker_or_checks (test_engine.EngineTests.test_review_only_reuses_checked_submission_without_worker_or_checks) ... ok
+test_review_only_survives_restart_and_repeated_transport_failure (test_engine.EngineTests.test_review_only_survives_restart_and_repeated_transport_failure) ... ok
+test_rework_is_automatic_and_preserves_prior_attempt (test_engine.EngineTests.test_rework_is_automatic_and_preserves_prior_attempt) ... ok
+test_scope_failure_never_reviews (test_engine.EngineTests.test_scope_failure_never_reviews) ... ok
+test_terminal_state_and_outbox_are_atomic (test_engine.EngineTests.test_terminal_state_and_outbox_are_atomic) ... ok
+test_truncated_or_missing_delivery_never_reviews (test_engine.EngineTests.test_truncated_or_missing_delivery_never_reviews) ... ok
+test_unconfirmed_old_process_blocks_resume_and_dispatch (test_engine.EngineTests.test_unconfirmed_old_process_blocks_resume_and_dispatch) ... ok
+test_allowed_directory_cannot_contain_exclusion (test_files.FilesTests.test_allowed_directory_cannot_contain_exclusion) ... ok
+test_empty_directory_scope_and_implicit_parent (test_files.FilesTests.test_empty_directory_scope_and_implicit_parent) ... ok
+test_existing_corrupted_blob_is_not_trusted (test_files.FilesTests.test_existing_corrupted_blob_is_not_trusted) ... ok
+test_git_index_changes_are_rejected (test_files.FilesTests.test_git_index_changes_are_rejected) ... ok
+test_json_artifacts_never_replaced (test_files.FilesTests.test_json_artifacts_never_replaced) ... ok
+test_lock_prevents_second_controller (test_files.FilesTests.test_lock_prevents_second_controller) ... ok
+test_manifest_rejects_scope_escape_and_contract_write (test_files.FilesTests.test_manifest_rejects_scope_escape_and_contract_write) ... ok
+test_snapshot_untracked_binary_mode_delete_symlink (test_files.FilesTests.test_snapshot_untracked_binary_mode_delete_symlink) ... ok
+test_tracked_file_cannot_be_excluded (test_files.FilesTests.test_tracked_file_cannot_be_excluded) ... ok
+test_acceptance_published_before_crash_can_resume_integration (test_integration.IntegrationTests.test_acceptance_published_before_crash_can_resume_integration) ... ok
+test_candidate_evidence_tamper_never_promotes (test_integration.IntegrationTests.test_candidate_evidence_tamper_never_promotes) ... ok
+test_crash_after_merge_reconciles_without_repeating_commit_or_merge (test_integration.IntegrationTests.test_crash_after_merge_reconciles_without_repeating_commit_or_merge) ... ok
+test_expired_budget_never_promotes_completed_commit (test_integration.IntegrationTests.test_expired_budget_never_promotes_completed_commit) ... ok
+test_invalid_pi_commits_never_reach_master_and_resume_only_integration (test_integration.IntegrationTests.test_invalid_pi_commits_never_reach_master_and_resume_only_integration) ... ok
+test_needs_changes_stays_in_implementation_until_review_accepts (test_integration.IntegrationTests.test_needs_changes_stays_in_implementation_until_review_accepts) ... ok
+test_pause_and_cancel_before_publication_never_merge (test_integration.IntegrationTests.test_pause_and_cancel_before_publication_never_merge) ... ok
+test_pinned_accepted_evidence_tamper_blocks_resume (test_integration.IntegrationTests.test_pinned_accepted_evidence_tamper_blocks_resume) ... ok
+test_promotion_failure_reuses_completed_pi_candidate (test_integration.IntegrationTests.test_promotion_failure_reuses_completed_pi_candidate) ... ok
+test_review_pi_commit_and_merge_preserve_source_and_dirty_planning (test_integration.IntegrationTests.test_review_pi_commit_and_merge_preserve_source_and_dirty_planning) ... ok
+test_target_drift_overlap_or_staged_changes_block_before_pi (test_integration.IntegrationTests.test_target_drift_overlap_or_staged_changes_block_before_pi) ... ok
+test_uncommitted_implementation_dependency_cannot_be_published (test_integration.IntegrationTests.test_uncommitted_implementation_dependency_cannot_be_published) ... ok
+test_bridge_has_no_accept_or_arbitrary_command_operation (test_interactive.InteractiveTests.test_bridge_has_no_accept_or_arbitrary_command_operation) ... ERROR
+test_changed_evidence_or_existing_verdict_prevents_resume (test_interactive.InteractiveTests.test_changed_evidence_or_existing_verdict_prevents_resume) ... ok
+test_check_failure_returns_automatic_rework_without_codex (test_interactive.InteractiveTests.test_check_failure_returns_automatic_rework_without_codex) ... ok
+test_crash_before_submission_receipt_preserves_orphan_and_skips_number (test_interactive.InteractiveTests.test_crash_before_submission_receipt_preserves_orphan_and_skips_number) ... ok
+test_exit_between_review_and_rework_can_resume (test_interactive.InteractiveTests.test_exit_between_review_and_rework_can_resume) ... ok
+test_foreground_proxy_split_does_not_change_parent_environment (test_interactive.InteractiveTests.test_foreground_proxy_split_does_not_change_parent_environment) ... ok
+test_interrupted_check_can_retry_in_new_attempt (test_interactive.InteractiveTests.test_interrupted_check_can_retry_in_new_attempt) ... ok
+test_interrupted_implementation_requires_explicit_resume (test_interactive.InteractiveTests.test_interrupted_implementation_requires_explicit_resume) ... ok
+test_legacy_duplicate_block_resumes_rework_without_replaying_review (test_interactive.InteractiveTests.test_legacy_duplicate_block_resumes_rework_without_replaying_review) ... ok
+test_legacy_resume_does_not_override_budget_or_other_blockers (test_interactive.InteractiveTests.test_legacy_resume_does_not_override_budget_or_other_blockers) ... ok
+test_legacy_resume_state_and_event_rollback_together (test_interactive.InteractiveTests.test_legacy_resume_state_and_event_rollback_together) ... ok
+test_legacy_rework_resume_rejects_changed_workspace_or_evidence (test_interactive.InteractiveTests.test_legacy_rework_resume_rejects_changed_workspace_or_evidence) ... ok
+test_lost_ack_duplicate_is_idempotent_and_different_body_rejected (test_interactive.InteractiveTests.test_lost_ack_duplicate_is_idempotent_and_different_body_rejected) ... ok
+test_pause_cannot_be_erased_by_concurrent_spawn (test_interactive.InteractiveTests.test_pause_cannot_be_erased_by_concurrent_spawn) ... ok
+test_pause_wins_over_late_accepted_review (test_interactive.InteractiveTests.test_pause_wins_over_late_accepted_review) ... ok
+test_repeated_failed_checks_return_rework_without_codex (test_interactive.InteractiveTests.test_repeated_failed_checks_return_rework_without_codex) ... ok
+test_repeated_issue_ids_continue_until_round_limit (test_interactive.InteractiveTests.test_repeated_issue_ids_continue_until_round_limit) ... ok
+test_resume_crash_does_not_reuse_orphan_review_directory (test_interactive.InteractiveTests.test_resume_crash_does_not_reuse_orphan_review_directory) ... ok
+test_review_failure_resumes_only_review_and_preserves_original (test_interactive.InteractiveTests.test_review_failure_resumes_only_review_and_preserves_original) ... ok
+test_scope_or_wrong_runtime_never_launches_review (test_interactive.InteractiveTests.test_scope_or_wrong_runtime_never_launches_review) ... ok
+test_stale_verdict_and_workspace_mutation_block_acceptance (test_interactive.InteractiveTests.test_stale_verdict_and_workspace_mutation_block_acceptance) ... ok
+test_submit_review_rework_accept_preserves_markdown_and_snapshot (test_interactive.InteractiveTests.test_submit_review_rework_accept_preserves_markdown_and_snapshot) ... ok
+test_unexpected_worker_exception_is_durable_blocked (test_interactive.InteractiveTests.test_unexpected_worker_exception_is_durable_blocked) ... ok
+test_large_stderr_drained_and_nonzero_recorded (test_process.ProcessTests.test_large_stderr_drained_and_nonzero_recorded) ... ok
+test_orphan_child_killed_before_leader_reaped (test_process.ProcessTests.test_orphan_child_killed_before_leader_reaped) ... ok
+test_timeout_and_cancel_leave_results (test_process.ProcessTests.test_timeout_and_cancel_leave_results) ... ok
+test_ack_and_agent_end_are_not_completion (test_protocol.ProtocolTests.test_ack_and_agent_end_are_not_completion) ... ok
+test_duplicate_state_does_not_resend (test_protocol.ProtocolTests.test_duplicate_state_does_not_resend) ... ok
+test_failure_or_truncation_never_accepted (test_protocol.ProtocolTests.test_failure_or_truncation_never_accepted) ... ok
+test_interactive_confirm_is_not_auto_approved (test_protocol.ProtocolTests.test_interactive_confirm_is_not_auto_approved) ... ok
+test_malformed_nested_objects_fail_explicitly (test_protocol.ProtocolTests.test_malformed_nested_objects_fail_explicitly) ... ok
+test_model_mismatch_no_prompt (test_protocol.ProtocolTests.test_model_mismatch_no_prompt) ... ok
+test_retry_then_settled_success (test_protocol.ProtocolTests.test_retry_then_settled_success) ... ok
+test_verdict_strict_binding (test_protocol.ProtocolTests.test_verdict_strict_binding) ... ok
+test_readonly_evidence_remounted_after_tmpfs (test_sandbox.SandboxTests.test_readonly_evidence_remounted_after_tmpfs) ... ok
+test_writable_hardlink_is_rejected_before_launch (test_sandbox.SandboxTests.test_writable_hardlink_is_rejected_before_launch) ... ok
+test_database_connection_refuses_writes (test_status.StatusTests.test_database_connection_refuses_writes) ... ok
+test_linked_or_malformed_outcomes_fail_without_changing_task (test_status.StatusTests.test_linked_or_malformed_outcomes_fail_without_changing_task) ... ok
+test_missing_database_does_not_create_state (test_status.StatusTests.test_missing_database_does_not_create_state) ... ok
+test_native_pi_status_uses_separate_root_without_opening_session (test_status.StatusTests.test_native_pi_status_uses_separate_root_without_opening_session) ... ok
+test_old_review_is_labeled_by_attempt_not_current_task_state (test_status.StatusTests.test_old_review_is_labeled_by_attempt_not_current_task_state) ... ok
+test_outcome_on_disk_does_not_accept_interrupted_task (test_status.StatusTests.test_outcome_on_disk_does_not_accept_interrupted_task) ... ok
+test_read_only_status_keeps_paused_reason_and_all_records (test_status.StatusTests.test_read_only_status_keeps_paused_reason_and_all_records) ... ok
+test_status_reads_old_schema_without_migration (test_status.StatusTests.test_status_reads_old_schema_without_migration) ... ok
+test_bridge_tags_only_definite_rejections_and_preserves_reason (test_submission_recovery.SubmissionRecoveryTests.test_bridge_tags_only_definite_rejections_and_preserves_reason) ... ERROR
+test_bytecode_is_archived_and_submission_runs_once (test_submission_recovery.SubmissionRecoveryTests.test_bytecode_is_archived_and_submission_runs_once) ... ok
+test_definite_rejection_has_evidence_but_no_receipt_or_new_attempt (test_submission_recovery.SubmissionRecoveryTests.test_definite_rejection_has_evidence_but_no_receipt_or_new_attempt) ... ok
+test_late_worker_cannot_overwrite_pause_cause (test_submission_recovery.SubmissionRecoveryTests.test_late_worker_cannot_overwrite_pause_cause) ... ok
+test_native_pi_cache_prefix_is_outside_workspace (test_submission_recovery.SubmissionRecoveryTests.test_native_pi_cache_prefix_is_outside_workspace) ... ok
+test_pause_cause_survives_session_exit (test_submission_recovery.SubmissionRecoveryTests.test_pause_cause_survives_session_exit) ... ok
+test_paused_implementation_resume_cleans_only_new_bytecode (test_submission_recovery.SubmissionRecoveryTests.test_paused_implementation_resume_cleans_only_new_bytecode) ... ok
+
+======================================================================
+ERROR: test_bridge_has_no_accept_or_arbitrary_command_operation (test_interactive.InteractiveTests.test_bridge_has_no_accept_or_arbitrary_command_operation)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/codinator-pi-integration-work/tests/test_interactive.py", line 57, in test_bridge_has_no_accept_or_arbitrary_command_operation
+    with Bridge(self.base / 'bridge', self.ui) as server:
+         ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/codinator-pi-integration-work/src/codinator/foreground.py", line 25, in __init__
+    super().__init__(str(path), Handler)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.13/socketserver.py", line 457, in __init__
+    self.server_bind()
+    ~~~~~~~~~~~~~~~~^^
+  File "/opt/anaconda3/lib/python3.13/socketserver.py", line 478, in server_bind
+    self.socket.bind(self.server_address)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+ERROR: test_bridge_tags_only_definite_rejections_and_preserves_reason (test_submission_recovery.SubmissionRecoveryTests.test_bridge_tags_only_definite_rejections_and_preserves_reason)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/codinator-pi-integration-work/tests/test_submission_recovery.py", line 84, in test_bridge_tags_only_definite_rejections_and_preserves_reason
+    with Bridge(self.base / 'bridge', self.ui) as server:
+         ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/tmp/codinator-pi-integration-work/src/codinator/foreground.py", line 25, in __init__
+    super().__init__(str(path), Handler)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.13/socketserver.py", line 457, in __init__
+    self.server_bind()
+    ~~~~~~~~~~~~~~~~^^
+  File "/opt/anaconda3/lib/python3.13/socketserver.py", line 478, in server_bind
+    self.socket.bind(self.server_address)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 1] Operation not permitted
+
+======================================================================
+FAIL: test_review_only_flag_is_explicit_and_preserves_extra_budget (test_cli.CliTests.test_review_only_flag_is_explicit_and_preserves_extra_budget)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/codinator-pi-integration-work/tests/test_cli.py", line 42, in test_review_only_flag_is_explicit_and_preserves_extra_budget
+    self.assertEqual(output.getvalue(), 'review_ready: task\n')
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: "<MagicMock name='Store().get().__getitem[40 chars]sk\n" != 'review_ready: task\n'
+- <MagicMock name='Store().get().__getitem__().__add__()' id='140558477744112'> task
++ review_ready: task
+
+
+----------------------------------------------------------------------
+Ran 134 tests in 206.763s
+
+FAILED (failures=1, errors=2)

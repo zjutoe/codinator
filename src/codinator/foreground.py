@@ -92,6 +92,8 @@ def launch(state_dir, target, *, resume=False, pi_bin='pi', codex_bin='codex'):
         raise Problem('codinator pi requires an interactive terminal')
     state = Path(state_dir).expanduser().resolve() / 'interactive'
     manifest = load_manifest(target) if Path(target).is_file() else None
+    if manifest and manifest.get('integration'):
+        raise Problem('Post-review integration currently requires the background service, not native Pi')
     s = Store(state)
     try:
         task_id = manifest['id'] if manifest else target

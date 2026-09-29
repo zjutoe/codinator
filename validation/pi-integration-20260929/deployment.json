@@ -1,0 +1,60 @@
+{
+  "verified_at": "2026-09-29T10:59:34.816532+00:00",
+  "base_commit": "32c187ec41b3484e6de3ef22ef4dd9499929ba36",
+  "source_committed": false,
+  "push": false,
+  "python_tests": 139,
+  "extension_tests": 14,
+  "independent_review": "accepted",
+  "real_live": "accepted",
+  "service": {
+    "MainPID": "738013",
+    "NRestarts": "0",
+    "ActiveState": "active",
+    "SubState": "running",
+    "UnitFileState": "enabled"
+  },
+  "deployed_files_sha256": {
+    "AGENTS.md": "3204a29166eda7686ee09ffa79623fe814523d89ce4e3c407b73ab209a7e5921",
+    "README.md": "e62e87d222c5fe3b4657670a14b8db7e0625da0b38a027f8842644f3df30f1ad",
+    "docs/codex-interface.md": "75e7a995b64b5b657feee0a5dccb33b04329f982f1f59504a22bd93c0462ee4a",
+    "src/codinator/agents.py": "1c404ae0cb960a9f8ab95acb79ff906c604ad5eff3757ac2a3019655f6ce7b79",
+    "src/codinator/cli.py": "2c80b21b05269deab73f861d5f9310b4ff5c66e08fcec4eba3f07e8520810ac8",
+    "src/codinator/config.py": "4831b3e6882696f9cc70bc43dbcb78245a919a681b203c48ab13d1b6085d4b8b",
+    "src/codinator/engine.py": "34105ad2e7305757591fd7e00c93f732cb5adc2857b42650cd901eaac85e1c87",
+    "src/codinator/foreground.py": "386f4d59d9d71f708450d11af8e3e7aff9b00f7c3cce4aa146b83359caefb5ce",
+    "src/codinator/integration.py": "471bbe0cfd339ea1f7c8602a6d63b9beee7e6dee00aa1a0334d9869e41ca30f8",
+    "src/codinator/review_resume.py": "f31be109d630185990cf166d2119ec7e13924ff7d4caac9b9507e552222ef26b",
+    "src/codinator/status.py": "2ba2fbd101376dc5071b387044e4f48ff3d43062cc8d0fdf324bf2ca0e3f3666",
+    "src/codinator/store.py": "32734f9569a9f17f4e0eb66232c75ccad70f8e57589f2ae2fd38653879a4ebe1",
+    "tests/fake_agent.py": "903e679549e2f2e99cb35d1e443d3320753fbe4f3474754e1dc3ec520dc60778",
+    "tests/test_cli.py": "4c49dc489c96d87e901572574a2b65a162c7514eb1183d09beb6d1e994698fac",
+    "tests/test_integration.py": "69f28fb6cc3e2108fe18c6daa8d62d393b2f43e60a4c4fdd76fbbbc321f58592",
+    "tests/test_integration_review.py": "bfdb7e8640bb9f0309f484596689493f33e179282e489520fe8d0de2d5dd3ab9",
+    "tests/test_status.py": "f3cb57ddae074dfa00a1b4dcb63b576a75e48412385cbf1e2193867f2994c48c",
+    "validation/integration_smoke.py": "a94ba7dcd37a7e74d837fded523418857983b54938cae7300e2a9c8c65d02aa6",
+    "validation/pi-integration-20260929/README.md": "913670c02b3fa42a1d1059953a487b34d2c580e584103f34ddc2424ea91fc288",
+    "validation/pi-integration-20260929/extension-r2.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "validation/pi-integration-20260929/extension-r2.stdout": "1889898a596f4679b092218fdf3f4850ecadd3877a223e99308ffe8c71b8b42e",
+    "validation/pi-integration-20260929/extension.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "validation/pi-integration-20260929/extension.stdout": "b7196c1472be0fd310247f850c57f9ee59fe48683868710f83210f6e0a1140d1",
+    "validation/pi-integration-20260929/focused-r2.stderr": "f2e0e495326da3918e5d2c0cf08b1d244d5d53763164938864705afb89460fce",
+    "validation/pi-integration-20260929/focused-r2.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "validation/pi-integration-20260929/full-r1.stderr": "f0435894658b7f3b7993fcfad298df9354904b28af81a75ee81f845adb7aacf6",
+    "validation/pi-integration-20260929/full-r1.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "validation/pi-integration-20260929/full-r2.stderr": "11ac12323f5b185ab08e5f726c27c49541e292bf6f2643664ce7e06866f69b1b",
+    "validation/pi-integration-20260929/full-r2.stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "validation/pi-integration-20260929/live-result.json": "83e1b965047836f03484b85051b39040029fcfc7e584a6ba5892ee9025b87bc7",
+    "validation/pi-integration-20260929/live-summary.json": "110bc8ca95e6f56065cec5607b51b5f98abd18622ecd9bf9c00a7629e74f62ed",
+    "validation/pi-integration-20260929/review.json": "284c62a90c1fdee457eae1157fa77613db3df656876bee3702e20b0b15b85145"
+  },
+  "rollback_archive": "/home/mye/.local/state/codinator/deployments/pi-integration-deploy-2mxpk8th",
+  "prior_tasks_preserved": [
+    [
+      "deploy-live-20260929T092520Z",
+      "accepted"
+    ]
+  ],
+  "T0020_submitted": false,
+  "failed_test_r1": "134 tests; one stale CLI mock expectation and two sandbox-denied Unix socket tests, preserved"
+}

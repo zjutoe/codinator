@@ -44,6 +44,7 @@ codinator status TASK_ID
 | `evidence` / `attempt_evidence` | 任务与最近 attempt 的证据位置；未开始时后者为空 |
 | `latest_review` | 最近落盘的 outcome、其 attempt、摘要和 Markdown 路径；包括控制器检查返工，可能属于历史轮次 |
 | `process_alive` | 已记录的检查／agent 子进程 PID 和启动标识是否仍匹配；不代表服务健康或 Pi TUI 存活 |
+| `review_accepted` / `integration` | 显式授权集成任务的独立审查接受标识、集成 attempt、候选提交及最终 merged_commit；旧任务无此字段 |
 | `next_action` | 提示查看、继续监控或检查后恢复；不是自动执行或扩大授权 |
 
 例如当前 `implementing / round 3 / attempt 3`、`latest_review.attempt=2` 表示正在按第二次审查修改，不是第三次审查已返回。即使磁盘中有 `accepted` outcome，控制器仍为 `blocked`，也必须核对中断现场，不能根据历史文件改写状态。损坏或链接的 outcome 会使查询明确报错。
@@ -63,6 +64,43 @@ codinator resume TASK_ID
 已完整交付、检查通过，仅独立审查因基础设施中断时，可使用 `codinator resume TASK_ID --review-only`；控制器验证旧提交及检查证据后只运行新审查。存在未协调的 verdict、证据损坏、快照变化或未完成实施会拒绝此操作。额度耗尽时不要把反复 resume 当成修复。
 
 后台总时间仍包括暂停时间。确需额外预算且已获授权时，使用 `--extra-seconds N` 或 `--attempt-seconds N` 明确记录，不改旧 manifest。主会话无需逐工具或逐轮调用模型监控；按用户查询读取状态，或使用明确配置的 `notify_thread` 接收终态通知即可。通知失败不改变结果，也不阻止后台返工。
+
+## 验收后由 Pi 提交并合并
+
+用户授权后，在新后台 manifest 中增加以下字段；没有此字段的旧任务行为保持不变。
+这是发布契约的一部分，不能给已冻结任务静默补授权。`target_workspace` 必须是同一
+仓库的另一工作树，发布时源和目标都处于 `base_commit`，目标检出 `target_branch`。
+
+```json
+"integration": {
+  "target_workspace": "/absolute/path/to/main-repository",
+  "target_branch": "master",
+  "base_commit": "完整的基线 commit hash",
+  "planning_paths": ["AGENTS.md", "docs/", "reports/"]
+}
+```
+
+`planning_paths` 仅声明发布前已有的未提交规划文件，不授予实施写权限，也不进入产品提交；
+不能与 `allowed_paths` 重叠。发布时索引须无暂存更改，其他未提交基线必须属于此清单。
+不支持 Git filters、include/worktree config 覆盖或改变内容的 checkout 转换。
+
+流程为 `reviewing → integration_ready → integrating → accepted`。独立审查接受后先固定其
+证据与提交快照，再建立无共享对象的私有 clone，将被接受的文件差异按原字节和执行位放入。
+新的 Pi + `bonsai2-27b/xhigh` 进程负责检查 diff、暂存确切文件、创建一个带说明正文的提交，
+切换到目标分支并 `merge --ff-only`。Pi 不能写原工作树、原 Git 或控制器证据。
+控制器在沙箱中核验单一父提交、完整 tree、干净状态、交付和完成协议，导出 bundle，
+再用固定 Git 命令把**同一个提交**快进到真实目标。没有 push、自动冲突解决、rebase 或强制更新。
+
+只合入从发布基线到接受快照的产品变更。目标中无冲突的规划改动保留；目标 HEAD 移动、
+暂存更改或与待合并路径重叠的未提交内容都会阻塞，不修改原主分支来强行完成。
+原任务工作树仍保持验收时 HEAD/index/文件快照，最终 commit 单独记录为 `integration.merged_commit`。
+
+`integration-NNNN/` 留存 Pi 原始协议、交付、私有 Git 副本、候选 bundle 与推广意图／结果。
+集成中断不会抹去 `review_accepted`；检查原因后普通 `resume` 只恢复集成，不重跑实施或验收。
+未完成的 Pi 协议不能被推定成功；显式恢复使用全新集成 attempt。已有完整候选时恢复只继续
+核验与推广；合并后控制器中断则用落盘意图核对既成提交，不重复提交或合并。
+集成受原任务总截止时间与单进程预算约束，暂停、取消与最终合并串行处理。
+此配置当前仅支持后台模式；原生 Pi 的旧任务、契约和证据不迁移。
 
 ## Python 缓存与故障证据
 

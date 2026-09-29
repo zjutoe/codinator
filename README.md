@@ -18,6 +18,11 @@
 Codinator user service 运行 Pi + Bonsai、必需检查、独立 Codex 审查及自动返工。
 服务运行后，阅读状态、与 Codex 对话或关闭主界面都不会暂停后台任务。
 
+任务 manifest 可显式授权验收后的 Pi commit/merge 阶段：独立 Codex 接受后，
+Pi + Bonsai 在隔离 Git 副本中提交并快进合并，控制器核对完整提交树后将同一提交
+快进到指定主工作树。启用后，任务只有合并完成才成为终态 `accepted`；不自动 push。
+配置和恢复边界见 [验收后集成](docs/codex-interface.md#验收后由-pi-提交并合并)。
+
 ```bash
 # 一次性生成并启用服务；先检查已有配置和任务。需要代理时在生成命令上设置。
 mkdir -p ~/.config/systemd/user
@@ -78,7 +83,7 @@ env http_proxy=http://127.0.0.1:8888 https_proxy=http://127.0.0.1:8888 \
 可省略 `--resume` 先查看现场，再在 Pi 中决定恢复。不会因重启而重放不确定的旧提示。
 默认最多四轮；`needs_changes` 在剩余轮次内自动交回 Pi，即使问题编号与上一轮相同。
 稳定编号用于追踪同一问题，不能据此判断修复没有进展。轮数耗尽、额度/连接故障、范围或冻结快照变化等情况会停止并说明原因。
-正常返工不需逐轮确认，但程序不承诺无限重试或任何任务一定被接受。验收后也不自动 commit/push/merge。
+正常返工不需逐轮确认，但程序不承诺无限重试或任何任务一定被接受。原生 Pi 模式不支持 manifest 的验收后集成配置，发布时会拒绝；既有原生任务不自动 commit/push/merge。
 
 旧版因 `Two consecutive reviews retain the same issue set` 停在 `blocked / feedback` 的交互任务，
 更新后退出旧控制器，再用 `codinator pi TASK_ID --resume`（或新会话内 `/codex-resume`）明确恢复。

@@ -124,7 +124,7 @@ def main(argv=None):
             if args.attempt_seconds is not None and args.attempt_seconds <= 0:
                 raise Problem('--attempt-seconds must be positive')
             engine.resume(args.task, args.extra_seconds, review_only=args.review_only, attempt_seconds=args.attempt_seconds)
-            print('review_ready:' if args.review_only else 'ready:', args.task)
+            print(store.get(args.task)['state'] + ':', args.task)
         elif args.command == 'recover':
             with lock(store.root / 'controller.lock'):
                 engine.recover()
@@ -143,7 +143,7 @@ def main(argv=None):
                     engine.recover()
                 while True:
                     for task in store.tasks():
-                        if task['state'] in ('ready', 'review_ready', 'needs_changes'):
+                        if task['state'] in ('ready', 'review_ready', 'needs_changes', 'integration_ready'):
                             engine.run(task['id'])
                     notifications(store, args.codex_bin)
                     time.sleep(3)

@@ -117,6 +117,59 @@ Then stop. You may not declare accepted. Each edit/check must remain within this
     return result['status']
 
 
+def integrator(task, attempt_dir, private, sandbox, process_options, number, entries, pi_bin="pi"):
+    """Pi owns commit/merge in a disposable clone; original Git stays read-only."""
+    from .integration import git_env
+    clone = attempt_dir / 'repository'
+    delivery = attempt_dir / 'delivery'
+    delivery.mkdir()
+    config = pi_home(private / 'pi')
+    branch = task['manifest']['integration']['target_branch']
+    completion = {"task_id": task['id'], "integration_attempt": number, "status": "complete"}
+    prompt = f"""You are the INTEGRATOR for an already independently accepted Codinator task.
+Task: {task['id']}. Accepted implementation attempt: {task['attempt']}.
+Accepted submission digest: {task['expected_digest']}.
+The user explicitly authorized a post-review Pi+Bonsai git commit and merge.
+This integration instruction supersedes earlier no-commit rules for this phase only.
+Original handoff: {Path(task['manifest']['workspace']) / task['manifest']['handoff']}.
+Work ONLY in the private clone {clone}. Original worktrees and Git are read-only.
+The controller materialized exactly the accepted changes here. Do not modify any
+source/tests, create extra files in the clone, reimplement, or change acceptance.
+1. Inspect git status/diff. Stage exactly these paths (including deletions):
+{json.dumps(list(entries))}.
+2. On branch codinator-integration, create exactly one commit, with a concise
+title and descriptive body explaining the accepted change, review and validation.
+Mention the task and accepted snapshot digest. Do not amend earlier commits.
+3. Switch to {branch} and merge codinator-integration using --ff-only.
+4. Verify HEAD, clean status and commit contents. No push, rebase, force update,
+hooks, remote access, conflict resolution or background processes.
+The controller will verify the complete commit tree against the accepted snapshot,
+then promote this SAME commit to the real target under the published contract.
+Write {delivery}/summary.md with commands, commit, outcome and any concrete blocker.
+Write {delivery}/completion.json as {json.dumps(completion)}.
+If blocked, use status "blocked" and explain in summary.md. Then stop.
+"""
+    (attempt_dir / 'integrator-prompt.txt').write_text(prompt)
+    argv = [pi_bin, '--mode', 'rpc', '--provider', 'bonsai', '--model', 'bonsai2-27b', '--thinking', 'xhigh',
+            '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-themes', '--offline',
+            '--session-dir', str(config / 'sessions')]
+    env = {k: v for k, v in git_env().items() if not k.lower().endswith('_proxy')}
+    env.update({'PI_CODING_AGENT_DIR': str(config), 'PI_OFFLINE': '1', 'PYTHONDONTWRITEBYTECODE': '1',
+                'PYTHONPYCACHEPREFIX': str(config / 'pycache'), 'NO_PROXY': '*', 'no_proxy': '*',
+                'NODE_USE_ENV_PROXY': '0', 'CUDA_VISIBLE_DEVICES': ''})
+    run_process(sandbox.wrap(argv, clone, writable=[clone, delivery, config], readonly=[attempt_dir]),
+                cwd=clone, env=env, out=attempt_dir / 'pi',
+                protocol=PiProtocol(prompt, attempt_dir / 'pi-runtime.json'), **process_options)
+    for name in ('summary.md', 'completion.json'):
+        path = delivery / name
+        if not path.is_file() or path.is_symlink() or path.stat().st_size > 1_000_000:
+            raise Problem('Missing or invalid Pi integration delivery')
+    actual = json.loads((delivery / 'completion.json').read_text())
+    if actual not in (completion, completion | {'status': 'blocked'}) or type(actual.get('integration_attempt')) is not int:
+        raise Problem('Pi integration completion does not match this attempt')
+    if not (delivery / 'summary.md').read_text().strip() or actual['status'] != 'complete':
+        raise Problem('Pi integration reported blocked; inspect its summary')
+
 ISSUE_FIELDS = ("id", "priority", "path", "description", "required_change", "validation")
 SCHEMA = {"type": "object", "additionalProperties": False,
     "properties": {"task_id": {"type": "string"}, "submission_digest": {"type": "string"},

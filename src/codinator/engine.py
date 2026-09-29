@@ -11,6 +11,7 @@ from .process import Interrupted, process_start, run_process, stop_group
 from .review_resume import checkpoint, require_unfinished_review
 from .sandbox import Sandbox
 from .store import lock
+from . import integration
 
 
 def _budget_timeout(deadline, limit):
@@ -34,6 +35,7 @@ class Engine:
         task_dir = self.store.root / 'tasks' / manifest['id']
         if task_dir.exists():
             raise Problem("Task artifacts already exist; choose a new task id")
+        integration.publication_preflight(manifest)
         before = snapshot(root, manifest['excludes'])
         task_dir.mkdir(parents=True)
         write_json(task_dir / 'manifest.json', manifest)
@@ -51,7 +53,7 @@ class Engine:
     def recover(self):
         """Only call while holding controller.lock. Never replay an uncertain prompt."""
         for task in self.store.tasks():
-            if task['state'] not in ('implementing', 'checking', 'reviewing') and not task['pid']:
+            if task['state'] not in ('implementing', 'checking', 'reviewing', 'integrating') and not task['pid']:
                 continue
             if task['pid']:
                 stop_group(task['pid'], task['pid_start'])
@@ -85,18 +87,21 @@ class Engine:
             task = self.store.get(task_id)
             if task['pid']:
                 raise Problem('Previous process exit is unconfirmed; dispatch refused')
-            if task['state'] not in ('ready', 'review_ready', 'needs_changes'):
+            if task['state'] not in ('ready', 'review_ready', 'needs_changes', 'integration_ready'):
                 raise Problem(f"Task is {task['state']}; cannot dispatch")
             repo_lock = Path('/tmp') / f"codinator-{os.getuid()}-{digest(task['manifest']['workspace'])}.lock"
             with lock(repo_lock):
                 self._loop(task_id)
 
     def _loop(self, task_id):
-        while self.store.get(task_id)['state'] in ('ready', 'review_ready', 'needs_changes'):
+        while self.store.get(task_id)['state'] in ('ready', 'review_ready', 'needs_changes', 'integration_ready'):
             task = self.store.get(task_id)
             m = task['manifest']
             if task['control']:
                 self.store.update(task_id, state='paused' if task['control'] == 'pause' else 'cancelled', control=None)
+                return
+            if task['state'] == 'integration_ready':
+                integration.run(self, task_id, _budget_timeout)
                 return
             if task['deadline'] is None:
                 now = time.time()
@@ -194,6 +199,12 @@ class Engine:
                     write_json(attempt / 'outcome.json', verdict)
                     (attempt / 'review.md').write_text(verdict['summary'] + '\n\n' + json.dumps(verdict['issues'], ensure_ascii=False, indent=2) + '\n')
                     if verdict['verdict'] == 'accepted':
+                        if m.get('integration'):
+                            pin, _ = integration.accepted_checkpoint(self.store, self.store.get(task_id), self.sandbox)
+                            self.store.update(task_id, state='integration_ready', phase='integration',
+                                              feedback=feedback, reason='Review accepted; Pi integration queued',
+                                              integration={'acceptance': pin, 'attempt': 0, 'status': 'pending', 'candidate': None})
+                            continue
                         self.store.finish(task_id, f"{task_id} accepted. Evidence: {attempt}",
                                           state='accepted', phase='done', feedback=feedback, reason=verdict['summary'])
                         return
@@ -246,7 +257,15 @@ class Engine:
             if digest(current) != task['expected_digest']:
                 raise Problem('Workspace no longer matches the recorded checkpoint; restore it or publish a new task')
             pinned = None
-            if review_only:
+            accepted = task['integration']
+            outcome = self.attempt_path(task) / 'outcome.json'
+            if task['manifest'].get('integration') and (accepted or (
+                    outcome.is_file() and json.loads(outcome.read_text()).get('verdict') == 'accepted')):
+                if review_only:
+                    raise Problem('Review already accepted; resume integration without --review-only')
+                pin, _ = integration.accepted_checkpoint(self.store, task, self.sandbox)
+                accepted = accepted or {'acceptance': pin, 'attempt': 0, 'status': 'pending', 'candidate': None}
+            elif review_only:
                 require_unfinished_review(self.attempt_path(task))
                 pinned, _ = checkpoint(self.store, task, self.sandbox)
             deadline = task['deadline']
@@ -260,6 +279,7 @@ class Engine:
                 feedback += (f'\nRuntime budget update (explicit resume): each Pi/Codex process <= {effective_limit} seconds; '
                              f'shared task deadline: {total}. Original handoff/manifest remain unchanged; '
                              'required-check timeouts and scope remain unchanged.')
-            self.store.update(task_id, state='review_ready' if review_only else 'ready',
-                              review_resume=pinned, control=None, reason='', deadline=deadline,
+            self.store.update(task_id, state='integration_ready' if accepted else 'review_ready' if review_only else 'ready',
+                              integration=accepted, review_resume=task['review_resume'] if accepted else pinned,
+                              control=None, reason='', deadline=deadline,
                               attempt_seconds_override=override, feedback=feedback)

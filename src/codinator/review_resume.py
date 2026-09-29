@@ -14,7 +14,7 @@ def require_unfinished_review(attempt):
             raise Problem('Existing verdict/outcome requires inspection; review-only resume refused')
 
 
-def checkpoint(store, task, sandbox):
+def checkpoint(store, task, sandbox, *, accepted=False):
     """Validate legacy evidence too; return a content-pinned original source."""
     previous = task['review_resume']
     number = previous['source_attempt'] if previous else task['attempt']
@@ -59,7 +59,8 @@ def checkpoint(store, task, sandbox):
             entered_review = True
     if not entered_review:
         raise Problem('No controller checkpoint proving this attempt reached review')
-    require_unfinished_review(source)
+    if not accepted:
+        require_unfinished_review(source)
     before, submitted = document('before.json'), document('submission.json')
     for name, value in (('before.json', before), ('submission.json', submitted)):
         if (type(value.get('git')) is not dict or type(value.get('root_mode')) is not int

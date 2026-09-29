@@ -1,0 +1,68 @@
+{
+  "verdict": "accepted",
+  "reviewer": "Independent non-author Codex reviewer /root/review_pi_integration",
+  "reviewed_at": "2026-09-29T10:54:13.929376+00:00",
+  "base_commit": "32c187ec41b3484e6de3ef22ef4dd9499929ba36",
+  "scope": "Optional accepted-review integration lifecycle, recovery/control, private-clone isolation, exact commit-tree promotion, manifest/state compatibility.",
+  "summary": "No remaining actionable findings after fixing host execution through agent clone config, cancellation publication race, and unpinned intake input.",
+  "resolved_findings": [
+    {
+      "id": "PI-INTEGRATION-R1",
+      "priority": "P1",
+      "problem": "Host verify_clone Git lazily fetched an agent-configured ext transport; independent probe created an out-of-clone marker before rejection.",
+      "fix": "All Git reads from the agent-mutated clone request read-only sandboxing; inherited Git environment is removed and lazy fetching/non-file protocols are disabled.",
+      "validation": "Reviewer regression test_agent_promisor_config_never_executes_on_host passes; original vulnerability reproduced before fix."
+    },
+    {
+      "id": "PI-INTEGRATION-R2",
+      "priority": "P2",
+      "problem": "Integration error publication read stale control outside a transaction and could overwrite concurrent cancel.",
+      "fix": "BEGIN IMMEDIATE covers current-control read and terminal failure publication.",
+      "validation": "Reviewer regression test_concurrent_cancel_survives_integration_failure_publication uses a separate SQLite connection and passes; original lost cancellation reproduced before fix."
+    },
+    {
+      "id": "PI-INTEGRATION-R3",
+      "priority": "P2",
+      "problem": "The published intake determining full integration scope was absent from the accepted evidence pin.",
+      "fix": "Validate intake against the initial submitted-event digest and include file_info in the acceptance evidence digest.",
+      "validation": "Independent execution of test_published_intake_cannot_be_changed_to_omit_accepted_files passes."
+    }
+  ],
+  "independent_checks": [
+    {
+      "command": "PYTHONPATH=src:tests python -B -m unittest -v test_integration_review",
+      "exit_code": 0,
+      "tests_passed": 2,
+      "elapsed_seconds": 10.142
+    },
+    {
+      "command": "PYTHONPATH=src:tests python -B -m unittest -v test_integration.IntegrationTests.test_published_intake_cannot_be_changed_to_omit_accepted_files",
+      "exit_code": 0,
+      "tests_passed": 1,
+      "elapsed_seconds": 4.837
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    }
+  ],
+  "limitations": [
+    "Reviewer probes use real Git and deterministic fake model subprocesses; they are not model connectivity evidence.",
+    "Reviewer regression checks sandbox invocation plus Git execution restrictions; real bubblewrap/live model execution is separately verified by the implementation owner.",
+    "This review does not attest deployment, KMesh integration or remote push."
+  ],
+  "reviewed_file_sha256": {
+    "src/codinator/integration.py": "471bbe0cfd339ea1f7c8602a6d63b9beee7e6dee00aa1a0334d9869e41ca30f8",
+    "src/codinator/engine.py": "34105ad2e7305757591fd7e00c93f732cb5adc2857b42650cd901eaac85e1c87",
+    "src/codinator/agents.py": "1c404ae0cb960a9f8ab95acb79ff906c604ad5eff3757ac2a3019655f6ce7b79",
+    "src/codinator/config.py": "4831b3e6882696f9cc70bc43dbcb78245a919a681b203c48ab13d1b6085d4b8b",
+    "src/codinator/store.py": "32734f9569a9f17f4e0eb66232c75ccad70f8e57589f2ae2fd38653879a4ebe1",
+    "src/codinator/status.py": "2ba2fbd101376dc5071b387044e4f48ff3d43062cc8d0fdf324bf2ca0e3f3666",
+    "src/codinator/cli.py": "2c80b21b05269deab73f861d5f9310b4ff5c66e08fcec4eba3f07e8520810ac8",
+    "src/codinator/review_resume.py": "f31be109d630185990cf166d2119ec7e13924ff7d4caac9b9507e552222ef26b",
+    "src/codinator/foreground.py": "386f4d59d9d71f708450d11af8e3e7aff9b00f7c3cce4aa146b83359caefb5ce",
+    "tests/test_integration.py": "69f28fb6cc3e2108fe18c6daa8d62d393b2f43e60a4c4fdd76fbbbc321f58592",
+    "tests/test_integration_review.py": "bfdb7e8640bb9f0309f484596689493f33e179282e489520fe8d0de2d5dd3ab9",
+    "tests/fake_agent.py": "903e679549e2f2e99cb35d1e443d3320753fbe4f3474754e1dc3ec520dc60778"
+  }
+}

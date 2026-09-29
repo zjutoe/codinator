@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import sys
 import time
+import subprocess
 
 MODE = os.environ.get('FAKE_MODE', 'accept')
 
@@ -33,7 +34,24 @@ if '--mode' in sys.argv:
                 gate = Path(os.environ['FAKE_GATE'])
                 while not gate.exists():
                     time.sleep(.05)
-            Path('product.py').write_text('VALUE = 42\n')
+            integrating = 'You are the INTEGRATOR' in prompt
+            if integrating:
+                def git(*args):
+                    subprocess.run(['git', *args], check=True, stdout=sys.stderr, stderr=sys.stderr)
+                integration_mode = os.environ.get('FAKE_INTEGRATION', '')
+                if integration_mode == 'wrong-tree':
+                    Path('unreviewed.py').write_text('not accepted\n')
+                git('add', '-A')
+                message = ['-m', 'Implement accepted fixture']
+                if integration_mode != 'no-body':
+                    message += ['-m', 'Reviewed product.py VALUE=42. Controller check passed.']
+                git('commit', *message)
+                git('switch', 'master')
+                git('merge', '--ff-only', 'codinator-integration')
+                if integration_mode == 'crash':
+                    sys.exit(9)
+            else:
+                Path('product.py').write_text('VALUE = 42\n')
             if MODE == 'scope':
                 Path('forbidden').write_text('bad')
             if MODE != 'missing-delivery':

@@ -1,0 +1,33 @@
+{
+  "state": "accepted",
+  "reason": "Accepted changes committed by Pi and fast-forwarded to target",
+  "integration": {
+    "acceptance": {
+      "review_attempt": 1,
+      "source_attempt": 1,
+      "submission_digest": "80a01da8d9c80eafd0665ac6c3de6f56bc13fb9290557ab07106d4ed942c5e58",
+      "evidence_digest": "fd9279b17daf40977e11e5111d39e637467a4251f97486cf2523755b0f9caf3c"
+    },
+    "attempt": 1,
+    "status": "complete",
+    "candidate": {
+      "attempt": 1,
+      "commit": "d8f4d08bf847d1480a054665af854ab5ccc497f2",
+      "tree": "40941407c5175a0d8c9b7db54b1c76b73d5ca6be",
+      "bundle": {
+        "kind": "file",
+        "mode": 384,
+        "sha256": "cf32a3820a904d9fc09495ca34c964be147edfc8e7407fc3cc6524e65b0f2f67",
+        "size": 782
+      },
+      "evidence_digest": "d64395f8b248b550ee79ac50b92aeec831ea34fe821d158974f919427c14118b"
+    },
+    "merged_commit": "d8f4d08bf847d1480a054665af854ab5ccc497f2"
+  },
+  "round": 1,
+  "attempt": 1,
+  "evidence_root": "/home/mye/data/codinator-integration-live-cqmy81xf",
+  "source_snapshot_unchanged": true,
+  "target_head": "d8f4d08bf847d1480a054665af854ab5ccc497f2",
+  "dirty_planning_preserved": true
+}

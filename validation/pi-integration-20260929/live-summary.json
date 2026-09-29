@@ -1,0 +1,138 @@
+{
+  "kind": "real Pi -> Codex -> Pi commit/merge; isolated fixture, no KMesh changes",
+  "root": "/home/mye/data/codinator-integration-live-cqmy81xf",
+  "state": "accepted",
+  "merged_commit": "d8f4d08bf847d1480a054665af854ab5ccc497f2",
+  "review": {
+    "task_id": "integration-live",
+    "submission_digest": "80a01da8d9c80eafd0665ac6c3de6f56bc13fb9290557ab07106d4ed942c5e58",
+    "verdict": "accepted",
+    "summary": "The implementation satisfies the contract. Only product.py changed; submitted bytes, existing files, and Git state match the evidence. Controller verification, an independent rerun, and 2,134 boundary and repeated-call probes passed. Source inspection confirms no IO or mutable global state.",
+    "issues": []
+  },
+  "implementation_pi": {
+    "provider": "bonsai",
+    "model": "bonsai2-27b",
+    "thinking": "xhigh",
+    "session_id": "01a0eccc-c595-7616-8bb5-8a4cebe7cc27",
+    "source": "Pi RPC get_state; client runtime identity, not server-weight attestation"
+  },
+  "integration_pi": {
+    "provider": "bonsai",
+    "model": "bonsai2-27b",
+    "thinking": "xhigh",
+    "session_id": "01a0eccf-9e6a-70e7-a8ad-b231fea33882",
+    "source": "Pi RPC get_state; client runtime identity, not server-weight attestation"
+  },
+  "processes": {
+    "implementation": {
+      "exit_code": 0,
+      "failure": null,
+      "started": 1790679237.5722423,
+      "finished": 1790679292.5583155,
+      "elapsed_seconds": 54.9860737323761,
+      "streams": {
+        "stdout.jsonl": {
+          "kind": "file",
+          "mode": 384,
+          "sha256": "d43e5115641d85bb7b13326e90feee6fc1fbe5913f76279dffd6095a02b2c40d",
+          "size": 844596
+        },
+        "stderr.txt": {
+          "kind": "file",
+          "mode": 384,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        }
+      }
+    },
+    "check": {
+      "exit_code": 0,
+      "failure": null,
+      "started": 1790679292.5773246,
+      "finished": 1790679292.6058922,
+      "elapsed_seconds": 0.028568029403686523,
+      "streams": {
+        "stdout.txt": {
+          "kind": "file",
+          "mode": 384,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        },
+        "stderr.txt": {
+          "kind": "file",
+          "mode": 384,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        }
+      }
+    },
+    "review": {
+      "exit_code": 0,
+      "failure": null,
+      "started": 1790679292.6224043,
+      "finished": 1790679423.900013,
+      "elapsed_seconds": 131.27760863304138,
+      "streams": {
+        "stdout.txt": {
+          "kind": "file",
+          "mode": 384,
+          "sha256": "88f05e6e3f7410d98eda89a720d513813eb0cc385b3ce3389c4f03259e65bdef",
+          "size": 24909
+        },
+        "stderr.txt": {
+          "kind": "file",
+          "mode": 384,
+          "sha256": "1aa26269eb1cc57f86b235a03cda53c004edb5b1e9fc99d4da4f00843293d721",
+          "size": 39
+        }
+      }
+    },
+    "integration": {
+      "exit_code": 0,
+      "failure": null,
+      "started": 1790679424.1487498,
+      "finished": 1790679494.5520976,
+      "elapsed_seconds": 70.40334820747375,
+      "streams": {
+        "stdout.jsonl": {
+          "kind": "file",
+          "mode": 384,
+          "sha256": "c0e9079ab98d298fb39725d3bbae15c2f773c2d299b762467783b680a0427bec",
+          "size": 1088991
+        },
+        "stderr.txt": {
+          "kind": "file",
+          "mode": 384,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        }
+      }
+    },
+    "bundle_export": {
+      "exit_code": 0,
+      "failure": null,
+      "started": 1790679494.609084,
+      "finished": 1790679494.6215117,
+      "elapsed_seconds": 0.012428045272827148,
+      "streams": {
+        "stdout.txt": {
+          "kind": "file",
+          "mode": 384,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        },
+        "stderr.txt": {
+          "kind": "file",
+          "mode": 384,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        }
+      }
+    }
+  },
+  "source_snapshot_unchanged": true,
+  "dirty_planning_preserved": true,
+  "pi_identity_limit": "RPC client metadata, not backend-weight attestation",
+  "earlier_pre_fix_live_run": "/home/mye/data/codinator-integration-live-398umt6i"
+}

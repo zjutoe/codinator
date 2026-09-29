@@ -66,6 +66,8 @@ class Store:
                 self.db.execute('ALTER TABLE tasks ADD COLUMN review_resume TEXT')
             if 'attempt_seconds_override' not in columns:
                 self.db.execute('ALTER TABLE tasks ADD COLUMN attempt_seconds_override INTEGER')
+            if 'integration' not in columns:
+                self.db.execute('ALTER TABLE tasks ADD COLUMN integration TEXT')
             self.db.commit()
         except BaseException:
             self.db.rollback()
@@ -79,6 +81,7 @@ class Store:
         result["manifest"] = json.loads(result["manifest"])
         result['review_resume'] = json.loads(result['review_resume']) if result.get('review_resume') is not None else None
         result.setdefault('attempt_seconds_override', None)
+        result['integration'] = json.loads(result['integration']) if result.get('integration') else None
         return result
 
     def tasks(self):
@@ -106,7 +109,7 @@ class Store:
             task = self.get(task_id)
             if task['state'] in ('accepted', 'cancelled'):
                 raise Problem('Task already terminal')
-            if task['state'] in ('implementing', 'checking', 'reviewing'):
+            if task['state'] in ('implementing', 'checking', 'reviewing', 'integrating'):
                 self._update(task_id, {'control': action})
             else:
                 self._update(task_id, {'state': 'paused' if action == 'pause' else 'cancelled',
@@ -114,12 +117,14 @@ class Store:
 
     def _update(self, task_id, fields):
         valid = {"state", "round", "attempt", "started", "deadline", "pid", "pid_start", "reason", "control",
-                 "feedback", "last_issues", "phase", "expected_digest", "review_resume", "attempt_seconds_override"}
+                 "feedback", "last_issues", "phase", "expected_digest", "review_resume", "attempt_seconds_override", "integration"}
         if not fields or set(fields) - valid:
             raise ValueError("Invalid state update")
         fields["updated"] = time.time()
         if fields.get('review_resume') is not None:
             fields['review_resume'] = json.dumps(fields['review_resume'])
+        if fields.get('integration') is not None:
+            fields['integration'] = json.dumps(fields['integration'])
         self.db.execute("UPDATE tasks SET " + ",".join(f"{k}=?" for k in fields) + " WHERE id=?",
                         (*fields.values(), task_id))
         self.event(task_id, "state", fields)

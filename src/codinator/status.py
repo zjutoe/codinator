@@ -16,6 +16,9 @@ def report(store, task, mode):
                   process_alive=bool(task['pid'] and task['pid_start']
                                      and process_start(task['pid']) == task['pid_start']),
                   latest_review=None)
+    if task.get('integration'):
+        result['integration'] = task['integration']
+        result['review_accepted'] = True
     # The latest completed review may belong to an earlier implementation round.
     # An outcome file is evidence, never a replacement for the persisted task state.
     for number in range(task['attempt'], 0, -1):

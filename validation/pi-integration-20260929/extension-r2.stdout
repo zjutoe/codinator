@@ -1,0 +1,22 @@
+✔ complete automatic implementation, submit, needs_changes, resubmit, accepted without commands (7.74047ms)
+✔ mixed batch is rejected without submitting or freezing ordinary tools (0.596904ms)
+✔ explicit resume of legacy blocked feedback dispatches Pi once with the existing review (0.799389ms)
+✔ Escape after reservation cancels pending submission and does not restart Pi (0.71192ms)
+✔ abort after terminating tool does not require an aborted assistant message (0.609688ms)
+✔ pause is persisted before abort and frozen ! shell commands never execute (0.663719ms)
+✔ model mismatch pauses before another implementation turn (0.53946ms)
+✔ definite rejection returns to Pi once without replaying the submission (1.829157ms)
+✔ unknown submission failure pauses with exact cause and never retries (0.651501ms)
+✔ late rejection cannot undo an explicit pause or trigger more Pi work (0.69406ms)
+✔ abort while waiting for a successful receipt pauses without replay (0.592815ms)
+✔ failed pause RPC preserves cause in session and polling cannot unfreeze tools (0.691342ms)
+✔ session shutdown clears pending and poll cannot dispatch another round (0.31976ms)
+✔ bridge preserves Chinese across a UTF-8 chunk boundary (3.739552ms)
+ℹ tests 14
+ℹ suites 0
+ℹ pass 14
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 107.150831
