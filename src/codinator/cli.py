@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import sqlite3
 import subprocess
 import sys
 import time
@@ -13,6 +14,7 @@ from .engine import Engine
 from .files import Problem
 from .process import run_process
 from .store import Store, lock
+from .status import report
 
 
 def notifications(store, codex_bin):
@@ -48,6 +50,9 @@ def main(argv=None):
     for name in ('run', 'status', 'pause', 'cancel', 'resume'):
         p = sub.add_parser(name)
         p.add_argument('task', nargs='?' if name == 'status' else None)
+        if name == 'status':
+            p.add_argument('--mode', choices=('background', 'pi'), default='background',
+                           help='Read background tasks or the separate native Pi state; never starts a session')
         if name == 'resume':
             p.add_argument('--extra-seconds', type=int, default=0)
             p.add_argument('--attempt-seconds', type=int, help='Override each Pi/Codex process timeout for this task; original manifest remains unchanged')
@@ -79,22 +84,22 @@ def main(argv=None):
                                                            '--codex-bin', shutil.which(args.codex_bin) or args.codex_bin, 'serve']))
             print('\n[Install]\nWantedBy=default.target')
             return 0
-        store = Store(args.state_dir)
         if args.command == 'status':
-            tasks = [store.get(args.task)] if args.task else store.tasks()
-            keys = ('id', 'state', 'phase', 'round', 'attempt', 'reason', 'deadline')
-            print(json.dumps([{k: t[k] for k in keys} | {
-                'attempt_seconds': t['attempt_seconds_override'] if t['attempt_seconds_override'] is not None else t['manifest']['attempt_seconds']
-            } for t in tasks], ensure_ascii=False, indent=2))
+            state = Path(args.state_dir).expanduser()
+            if args.mode == 'pi':
+                state /= 'interactive'
+            store = Store(state, read_only=True)
+            try:
+                with store.db:
+                    store.db.execute('BEGIN')
+                    tasks = [store.get(args.task)] if args.task else store.tasks()
+                    print(json.dumps([report(store, t, args.mode) for t in tasks], ensure_ascii=False, indent=2))
+            finally:
+                store.db.close()
             return 0
+        store = Store(args.state_dir)
         if args.command in ('pause', 'cancel'):
-            task = store.get(args.task)
-            if task['state'] in ('accepted', 'cancelled'):
-                raise Problem('Task already terminal')
-            if task['state'] in ('implementing', 'checking', 'reviewing'):
-                store.update(args.task, control=args.command)
-            else:
-                store.update(args.task, state='paused' if args.command == 'pause' else 'cancelled')
+            store.request_control(args.task, args.command)
             return 0
         if args.command == 'notify':
             notifications(store, args.codex_bin)
@@ -145,6 +150,6 @@ def main(argv=None):
         return 0
     except KeyboardInterrupt:
         return 130
-    except (Problem, OSError, ValueError, KeyError) as exc:
+    except (Problem, OSError, ValueError, KeyError, sqlite3.Error) as exc:
         print(f'codinator: {exc}', file=sys.stderr)
         return 2

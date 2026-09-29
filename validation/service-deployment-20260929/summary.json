@@ -1,0 +1,118 @@
+{
+  "verified_at": "2026-09-29T09:38:22.989540+00:00",
+  "task_id": "deploy-live-20260929T092520Z",
+  "state": "accepted",
+  "round": 1,
+  "attempt": 2,
+  "service": {
+    "MainPID": "670745",
+    "Result": "success",
+    "NRestarts": "0",
+    "ControlGroup": "/user.slice/user-1001.slice/user@1001.service/app.slice/codinator.service",
+    "ActiveState": "active",
+    "SubState": "running",
+    "FragmentPath": "/home/mye/.config/systemd/user/codinator.service",
+    "UnitFileState": "enabled"
+  },
+  "service_parent": {
+    "pid": 2082,
+    "comm": "systemd"
+  },
+  "linger": "Linger=yes",
+  "service_unit_sha256": "6efbace1bdce6d61ea2ebb85881c45dcb6115e031ed135bc5daeb9afd8b74b94",
+  "pi_config_directory": "/home/mye/.config/codinator/pi",
+  "real_pi_runtime": {
+    "provider": "bonsai",
+    "model": "bonsai2-27b",
+    "thinking": "xhigh",
+    "session_id": "01a0ec7f-d7e5-77dd-8728-35b34c161325",
+    "source": "Pi RPC get_state; client runtime identity, not server-weight attestation"
+  },
+  "codex_model": "gpt-6-astra",
+  "codex_reasoning": "xhigh",
+  "processes": {
+    "pi": {
+      "exit_code": 0,
+      "elapsed_seconds": 65.24913001060486
+    },
+    "checks/verify": {
+      "exit_code": 0,
+      "elapsed_seconds": 0.04350733757019043
+    },
+    "codex": {
+      "exit_code": 0,
+      "elapsed_seconds": 179.34734749794006
+    }
+  },
+  "submission_digest": "1cf89d9156dbb38c530fcc4ed529bb0e24f7a3b0a0a3bad4e9fd31c6d72a7c90",
+  "review_summary": "Independently verified all six fields, exact input SHA-256, 129 bytes, 3 LF bytes, and integer types. Only result.json changed; immutable files and Git state match the recorded baseline. Required verification passed independently and in controller evidence. Raw events confirm successful implementation completion and delivery. No unresolved issues.",
+  "frontend_exit_did_not_stop_task": true,
+  "first_attempt_failure_preserved": true,
+  "first_attempt_files_verified": 8,
+  "reviewed_code_hashes_match": true,
+  "controller_evidence": "/home/mye/.local/state/codinator/tasks/deploy-live-20260929T092520Z/attempt-0002",
+  "deployment_archive": "/home/mye/.local/state/codinator/deployments/deploy-live-20260929T092520Z",
+  "existing_T0019_state": "accepted",
+  "T0020_submitted": false,
+  "source_code_modified": false,
+  "commit_or_push": false,
+  "events": [
+    {
+      "time": 1790674025.7295702,
+      "kind": "submitted"
+    },
+    {
+      "time": 1790674025.9272156,
+      "kind": "state",
+      "state": "implementing",
+      "phase": "pi",
+      "attempt": 1,
+      "reason": ""
+    },
+    {
+      "time": 1790674026.5251348,
+      "kind": "state",
+      "state": "blocked",
+      "phase": "stopped",
+      "reason": "Pi did not complete successfully: settled=False, stopReason=None, error=None"
+    },
+    {
+      "time": 1790674192.9821436,
+      "kind": "state",
+      "state": "ready",
+      "reason": ""
+    },
+    {
+      "time": 1790674195.9712183,
+      "kind": "state",
+      "state": "implementing",
+      "phase": "pi",
+      "attempt": 2,
+      "reason": ""
+    },
+    {
+      "time": 1790674261.2516396,
+      "kind": "state",
+      "state": "checking",
+      "phase": "checks"
+    },
+    {
+      "time": 1790674261.3096118,
+      "kind": "state",
+      "state": "reviewing",
+      "phase": "codex"
+    },
+    {
+      "time": 1790674440.698615,
+      "kind": "state",
+      "state": "accepted",
+      "phase": "done",
+      "reason": "Independently verified all six fields, exact input SHA-256, 129 bytes, 3 LF bytes, and integer types. Only result.json changed; immutable files and Git state match the recorded baseline. Required verification passed independently and in controller evidence. Raw events confirm successful implementation completion and delivery. No unresolved issues."
+    }
+  ],
+  "limits": [
+    "Real success-path verification; automatic needs_changes rework remains covered by prior fake-agent/fault tests.",
+    "Pi identity is RPC client metadata, not backend-weight attestation.",
+    "Codex sandbox PID namespace cannot see host service PIDs; use host systemctl for liveness."
+  ]
+}

@@ -26,8 +26,15 @@ def lock(path):
 
 
 class Store:
-    def __init__(self, root):
+    def __init__(self, root, *, read_only=False):
         self.root = Path(root).expanduser().resolve()
+        if read_only:
+            database = self.root / 'state.sqlite'
+            if not database.is_file():
+                raise Problem(f'No task database at {database}; select the correct mode/state directory')
+            self.db = sqlite3.connect(database.as_uri() + '?mode=ro', uri=True, timeout=15)
+            self.db.row_factory = sqlite3.Row
+            return
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.db = sqlite3.connect(self.root / "state.sqlite", timeout=15)
         self.db.row_factory = sqlite3.Row
@@ -70,7 +77,8 @@ class Store:
             raise Problem(f"Unknown task {task_id}")
         result = dict(row)
         result["manifest"] = json.loads(result["manifest"])
-        result['review_resume'] = json.loads(result['review_resume']) if result['review_resume'] is not None else None
+        result['review_resume'] = json.loads(result['review_resume']) if result.get('review_resume') is not None else None
+        result.setdefault('attempt_seconds_override', None)
         return result
 
     def tasks(self):
@@ -89,6 +97,20 @@ class Store:
     def update(self, task_id, **fields):
         with self.db:
             self._update(task_id, fields)
+
+    def request_control(self, task_id, action):
+        if action not in ('pause', 'cancel'):
+            raise ValueError('Invalid control action')
+        with self.db:
+            self.db.execute('BEGIN IMMEDIATE')
+            task = self.get(task_id)
+            if task['state'] in ('accepted', 'cancelled'):
+                raise Problem('Task already terminal')
+            if task['state'] in ('implementing', 'checking', 'reviewing'):
+                self._update(task_id, {'control': action})
+            else:
+                self._update(task_id, {'state': 'paused' if action == 'pause' else 'cancelled',
+                                      'control': None})
 
     def _update(self, task_id, fields):
         valid = {"state", "round", "attempt", "started", "deadline", "pid", "pid_start", "reason", "control",

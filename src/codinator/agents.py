@@ -96,6 +96,7 @@ Then stop. You may not declare accepted. Each edit/check must remain within this
     # Bonsai is local. Never inherit the controller/Codex HTTP proxy into Pi.
     env = {key: value for key, value in os.environ.items() if not key.lower().endswith('_proxy')}
     env.update({"PI_CODING_AGENT_DIR": str(config), "PI_OFFLINE": "1", "PYTHONDONTWRITEBYTECODE": "1",
+                "PYTHONPYCACHEPREFIX": str(config / 'pycache'),
                 "NO_PROXY": "*", "no_proxy": "*", "NODE_USE_ENV_PROXY": "0"})
     run_process(sandbox.wrap(argv, root, manifest['allowed_paths'], [delivery, config]), cwd=root, env=env,
                 out=attempt_dir / "pi", protocol=PiProtocol(prompt, attempt_dir / "pi-runtime.json"), **process_options)

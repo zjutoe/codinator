@@ -4,6 +4,7 @@ from pathlib import Path
 import time
 
 from .agents import reviewer, worker
+from .bytecode import clean_bytecode
 from .config import positive
 from .files import Problem, assert_scope, changes, digest, preserve, snapshot, write_json
 from .process import Interrupted, process_start, run_process, stop_group
@@ -115,9 +116,14 @@ class Engine:
                         raise Problem('Missing persisted review checkpoint')
                     require_unfinished_review(self.attempt_path(task))
                     pinned, evidence_dir = checkpoint(self.store, task, self.sandbox)
-                self.store.update(task_id, attempt=task['attempt'] + 1,
-                                  state='reviewing' if review_only else 'implementing',
-                                  phase='codex' if review_only else 'pi', reason='')
+                with self.store.db:
+                    self.store.db.execute('BEGIN IMMEDIATE')
+                    current = self.store.get(task_id)
+                    if current['state'] not in ('ready', 'review_ready', 'needs_changes') or current['control']:
+                        return
+                    self.store.update(task_id, attempt=task['attempt'] + 1,
+                                      state='reviewing' if review_only else 'implementing',
+                                      phase='codex' if review_only else 'pi', reason='')
                 task = self.store.get(task_id)
                 attempt = self.attempt_path(task)
                 attempt.mkdir(parents=True, exist_ok=False)
@@ -142,6 +148,10 @@ class Engine:
                     timeout = _budget_timeout(task['deadline'], attempt_seconds)
                     pi_status = worker(task, attempt, private, self.sandbox, self.options(task_id, timeout), self.pi_bin)
                     after = snapshot(root, m['excludes'])
+                    write_json(attempt / 'implementation.json', after)
+                    preserve(root, after, self.store.root / 'blobs')
+                    after = clean_bytecode(root, before, after, m['allowed_paths'], m['excludes'],
+                                           attempt.parent, self.store.root / 'blobs')
                     write_json(attempt / 'submission.json', after)
                     write_json(attempt / 'diff.json', {'paths': changes(before, after), 'digest': digest(after)})
                     preserve(root, after, self.store.root / 'blobs')
@@ -176,24 +186,27 @@ class Engine:
                     if review_only:
                         checkpoint(self.store, task, self.sandbox)
                     feedback = json.dumps(verdict, ensure_ascii=False, indent=2)
-                write_json(attempt / 'outcome.json', verdict)
-                (attempt / 'review.md').write_text(verdict['summary'] + '\n\n' + json.dumps(verdict['issues'], ensure_ascii=False, indent=2) + '\n')
-                if verdict['verdict'] == 'accepted':
-                    self.store.finish(task_id, f"{task_id} accepted. Evidence: {attempt}",
-                                      state='accepted', phase='done', feedback=feedback, reason=verdict['summary'])
-                    return
-                if verdict['verdict'] == 'blocked':
-                    raise Problem(verdict['summary'])
-                ids = json.dumps(sorted(i['id'] for i in verdict['issues']))
-                if task['round'] >= m['max_rounds']:
-                    raise Problem('Automatic rework round budget exhausted; ' + feedback)
-                # Stable finding IDs do not measure progress; max_rounds bounds retries.
-                self.store.update(task_id, state='needs_changes', round=task['round'] + 1, phase='queued',
-                                  feedback=feedback, last_issues=ids, review_resume=None)
+                # Serialize publication with frontend pause/cancel requests.
+                with self.store.db:
+                    self.store.db.execute('BEGIN IMMEDIATE')
+                    if self.store.get(task_id)['control']:
+                        raise Interrupted('Pause/cancel requested before verdict publication')
+                    write_json(attempt / 'outcome.json', verdict)
+                    (attempt / 'review.md').write_text(verdict['summary'] + '\n\n' + json.dumps(verdict['issues'], ensure_ascii=False, indent=2) + '\n')
+                    if verdict['verdict'] == 'accepted':
+                        self.store.finish(task_id, f"{task_id} accepted. Evidence: {attempt}",
+                                          state='accepted', phase='done', feedback=feedback, reason=verdict['summary'])
+                        return
+                    if verdict['verdict'] == 'blocked':
+                        raise Problem(verdict['summary'])
+                    ids = json.dumps(sorted(i['id'] for i in verdict['issues']))
+                    if task['round'] >= m['max_rounds']:
+                        raise Problem('Automatic rework round budget exhausted; ' + feedback)
+                    # Stable finding IDs do not measure progress; max_rounds bounds retries.
+                    self.store.update(task_id, state='needs_changes', round=task['round'] + 1, phase='queued',
+                                      feedback=feedback, last_issues=ids, review_resume=None)
             except (Problem, OSError, ValueError, KeyboardInterrupt) as exc:
                 current_task = self.store.get(task_id)
-                control = current_task['control']
-                state = 'paused' if control == 'pause' or isinstance(exc, KeyboardInterrupt) else 'cancelled' if control == 'cancel' else 'blocked'
                 # Keep successful in-scope edits from an interrupted Pi run, but do
                 # not legitimize concurrent edits after the submission was frozen.
                 if current_task['state'] == 'implementing':
@@ -204,8 +217,15 @@ class Engine:
                         self.store.update(task_id, expected_digest=digest(current))
                     except (Problem, OSError):
                         pass
-                self.store.finish(task_id, f"{task_id} {state}: {exc}",
-                                  state=state, phase='stopped', reason=str(exc), control=None)
+                with self.store.db:
+                    self.store.db.execute('BEGIN IMMEDIATE')
+                    current = self.store.get(task_id)
+                    control = current['control']
+                    state = (current['state'] if current['state'] in ('paused', 'cancelled') else
+                             'cancelled' if control == 'cancel' else
+                             'paused' if control == 'pause' or isinstance(exc, KeyboardInterrupt) else 'blocked')
+                    self.store.finish(task_id, f"{task_id} {state}: {exc}",
+                                      state=state, phase='stopped', reason=str(exc), control=None)
                 if isinstance(exc, KeyboardInterrupt):
                     raise
                 return

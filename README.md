@@ -12,7 +12,36 @@
 已有任务继续通过 `--state-dir` 指向原状态目录，不搬迁或重写原 manifest、会话和证据。
 服务 unit 须重新生成，环境变量及外部调用脚本须同步改名；安装本身不启用服务或自动派发任务。
 
-## Pi 主界面：自动实施与审查
+## 推荐：Codex 主界面，后台自动实施与审查
+
+在原生 Codex 中讨论与管理任务，通过 CLI 发布、查询和显式恢复；由独立的
+Codinator user service 运行 Pi + Bonsai、必需检查、独立 Codex 审查及自动返工。
+服务运行后，阅读状态、与 Codex 对话或关闭主界面都不会暂停后台任务。
+
+```bash
+# 一次性生成并启用服务；先检查已有配置和任务。需要代理时在生成命令上设置。
+mkdir -p ~/.config/systemd/user
+codinator service > ~/.config/systemd/user/codinator.service
+systemctl --user daemon-reload
+systemctl --user enable --now codinator.service
+
+# 新任务准备好独立工作树与明确契约后发布
+codinator submit /absolute/path/to/task.json
+codinator status TASK_ID
+```
+
+`status` 是只读查询，显示当前阶段、暂停原因、轮次、attempt、证据路径和带 attempt 标识的
+最近审查，避免把旧审查当成当前轮次结果。`codinator status TASK_ID --mode pi` 可直接查询
+原生 Pi 的现有任务，无需启动 Pi。新安装尚无任务库时会明确报错，不静默创建空状态。
+
+服务负责确定性的执行闭环；主 Codex 会话负责设计与异常解释，正式验收仍由独立进程执行。
+不需要 Codex App Server、额外 MCP 或前台持续轮询。`run` 保留为前台诊断命令；日常使用
+已经启用的 `serve`，不要同时再运行 `run`。配置 `notify_thread` 是可选的，不影响自动返工。
+
+操作、状态字段、故障恢复及两种模式的边界见 [Codex 主界面协议](docs/codex-interface.md)。
+原生 Pi 可在发布前选择用于直接观察和干预实施；本版不支持后台任务中途 attach 或模式迁移。
+
+## 可选：原生 Pi 直接交互
 
 在交互终端启动一份明确的任务 manifest：
 
@@ -89,8 +118,8 @@ workspace 必须是独立 Git 仓库／worktree 的根目录；可以有未提�
 不要把正在人工编辑的工作树直接投入自动运行。
 
 ```bash
+# 按上文启用独立服务后
 .venv/bin/codinator submit /absolute/path/to/task.json
-.venv/bin/codinator run demo-add
 .venv/bin/codinator status demo-add
 ```
 
@@ -131,14 +160,14 @@ ready → implementing → checking → reviewing → accepted
 必需检查失败会附带原始结果进入返工；检查通过后才启动 Codex 审查。
 Codex 根据原契约、真实代码、测试质量、快照和执行记录决定通过、返工或阻塞。
 默认最多四轮实施（首轮加三次返工），总墙钟四小时；单个Pi或Codex进程默认上限7200秒（两小时）。
-两个阶段、检查和返工共享总墙钟；单次上限不是保证可用时长。连续两轮保留相同问题集合时暂停。
+两个阶段、检查和返工共享总墙钟；单次上限不是保证可用时长。相同 issue ID 仍在剩余轮次内返工。
 传输失败、输出截断、缺少交付、越界改动和不可信验收结果进入 `blocked`，不会误报通过。
 Pi 自身可按其重试策略处理瞬时服务错误；调度器不盲目重发可能已经执行过的 prompt。
 
 ```bash
 .venv/bin/codinator pause demo-add
 .venv/bin/codinator resume demo-add
-.venv/bin/codinator run demo-add
+.venv/bin/codinator status demo-add
 # 墙钟预算含暂停时间；需要延长时显式授权：
 .venv/bin/codinator resume demo-add --extra-seconds 3600
 .venv/bin/codinator cancel demo-add
@@ -211,6 +240,7 @@ tasks/<task>/
   manifest.json / intake.json          发布时的契约与完整快照
   handoff.md                          发布时的原契约文本
   attempt-0001/
+    implementation.json              后台 Pi 完整交付后的原始现场（归档缓存之前）
     before.json / submission.json     文件内容、类型、模式、Git HEAD/index
     diff.json                         本轮改动范围与快照摘要
     pi-runtime.json                   RPC 报告的实际客户端模型身份
@@ -233,6 +263,8 @@ notifications/                        通知的每次发送尝试
 Pi 在 bubblewrap 中运行：主机文件默认只读，Git 元数据与现存非授权文件只读；
 允许文件所需父目录可写以支持原子替换。新建越界条目会被事后范围检查拒绝，
 这不等于所有非法新文件都在创建前被阻断。超范围时保留现场并暂停，不自动删除。
+后台完整交付后会先留存原始现场，再归档严格识别的新 Python 缓存；有其他越界时不清理，
+冻结检查／审查不清理。未完成协议与中断恢复仍要求检查原始证据和快照，详见主界面协议。
 Codex 也有外层进程隔离，工作树只读，CLI 内层显式 `--sandbox read-only`、`-a never`。
 两种 agent 都启用父进程退出清理与 PID namespace；没有不受限运行的自动降级。
 这属于单用户工程隔离，不是对恶意同 UID 主机进程的安全防线。

@@ -1,0 +1,59 @@
+{
+  "baseline_commit": "77b9b732cee381b80ca31580c8fc1e95afeddb13",
+  "python_tests": 122,
+  "pi_extension_tests": 14,
+  "model_calls": 0,
+  "independent_review": {
+    "agent": "/root/review_submission_recovery",
+    "verdict": "accepted",
+    "finding_fixed": "Serialize pause/cancel requests with attempt allocation and verdict publication in SQLite transactions",
+    "probes": [
+      "Pause before publication prevents accepted outcome",
+      "Pause concurrent with publication waits then rejects terminal state",
+      "Read-only status sees current WAL data without modifying records or starting agents",
+      "Partial cache move preserves raw implementation snapshot, blobs and remaining files; review never starts"
+    ]
+  },
+  "service_unit": {
+    "prepared": "/tmp/codinator-codex-interface-6hr234fl/codinator.service",
+    "verify_command": [
+      "systemd-analyze",
+      "--user",
+      "verify",
+      "/tmp/codinator-codex-interface-6hr234fl/codinator.service"
+    ],
+    "exit_code": 0,
+    "installed": false,
+    "started": false
+  },
+  "read_only_real_task_probe": {
+    "task": "T0019-motif-candidate-audit",
+    "mode": "pi",
+    "state": "accepted",
+    "round": 3,
+    "attempt": 3,
+    "latest_review_attempt": 3,
+    "database_sha256_unchanged": true,
+    "task_dispatched": false
+  },
+  "limits": [
+    "Service/frontend lifecycle tests use separate local processes with fake agents, not live models or an installed production user service",
+    "No automatic mode migration or attach to a background Pi",
+    "Interrupted background implementation or failed cache archive may require manual inspection; ordinary resume retains strict checkpoint validation",
+    "Only explicit user-service installation provides independence from the frontend shell; logout persistence depends on host user-service settings"
+  ],
+  "changed_file_sha256": {
+    "README.md": "a5c7648931307f0592a52c906d2ebd5d8f9714ed226ca5c1060892bee00d796f",
+    "docs/codex-interface.md": "fc82a1c1c3ca3077e7c2ae23a82693df93d635020592313230ca0cdb37acb9b5",
+    "docs/pi-interface.md": "64bc8e79b896fe9ffe7becfc1d7d1a45a74e1a029d92c4af26bd93fa1fb5c8d7",
+    "src/codinator/agents.py": "e0f46e60f8422ed9ba17babd36ce6c0aad40af25fc194f90147d471a5e545029",
+    "src/codinator/cli.py": "9e62ba48f8509d32693737f99864a32e3d2e4c91fab2d10c8cf157390d2c6c06",
+    "src/codinator/engine.py": "22257c21f2c547f34ad081232a7d77982153ed1333bc743f311ece53103dc317",
+    "src/codinator/status.py": "9268c9da1f62e0cc2f384753794c481aaee0bdd527262101b57082d53b8e0f52",
+    "src/codinator/store.py": "969f50f5bd44736612a9b1b935e96621352a7a82ad33901b48bd56c7abe8a3cd",
+    "tests/fake_agent.py": "d94982bb82f22de43e6bf555b1d27a662cb669731a5fa1cfd248c943fed1cbcf",
+    "tests/test_cli.py": "5421430118b00937121b956cd78ac450f18a05b9570be1a6c058407ff6c203b5",
+    "tests/test_status.py": "0badbc246b6cd3ab54e5713fc9717029fa9edfe0f190cba7c24ccbe947479fab",
+    "tests/test_background_interface.py": "355d34d3a64e325ae891a9f3401f0c681dca61c9f36f20fd635eabb20f7c0265"
+  }
+}

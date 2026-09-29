@@ -1,4 +1,6 @@
-# Pi 主界面协议 v1
+# 原生 Pi 可选交互协议 v1
+
+日常任务管理推荐使用 [Codex 主界面与后台执行](codex-interface.md)。本入口保留原生 Pi 的直接交互能力，不提供对后台任务的只读 attach 或模式迁移。可通过 `codinator status TASK_ID --mode pi` 从 Codex 只读查看现有任务，不需要启动 Pi。
 
 一次明确启动已发布的任务后，Pi + `bonsai/bonsai2-27b/xhigh` 可自动实施、提交、等待 Codex、返工和再次提交。只有独立 Codex 的 `accepted` 可结束验收；无需逐轮用户确认。轮次耗尽、范围/证据变化、服务故障或用户中止会暂停，不保证任何任务必然被接受。
 

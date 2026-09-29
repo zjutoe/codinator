@@ -1,6 +1,7 @@
 import contextlib
 import io
 import os
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 
@@ -21,7 +22,7 @@ class CliTests(unittest.TestCase):
                  patch('codinator.cli.Store') as store, contextlib.redirect_stdout(io.StringIO()):
                 store.return_value.tasks.return_value = []
                 self.assertEqual(main(argv), 0)
-                store.assert_called_once_with(expected)
+                store.assert_called_once_with(Path(expected).expanduser(), read_only=True)
 
     def test_service_uses_installed_command_and_explicit_state(self):
         output = io.StringIO()

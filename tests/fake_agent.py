@@ -29,6 +29,10 @@ if '--mode' in sys.argv:
             task = json.loads(body)
             if MODE == 'sleep':
                 time.sleep(60)
+            if MODE == 'gated-rework':
+                gate = Path(os.environ['FAKE_GATE'])
+                while not gate.exists():
+                    time.sleep(.05)
             Path('product.py').write_text('VALUE = 42\n')
             if MODE == 'scope':
                 Path('forbidden').write_text('bad')
@@ -57,7 +61,7 @@ else:
         emit({'type': 'turn.failed', 'error': {'message': 'fixture: usage limit'}})
         sys.exit(9)
     first = result_path.parent.parent.name == 'attempt-0001'
-    needs = MODE == 'no-progress' or (MODE == 'rework' and first)
+    needs = MODE == 'no-progress' or (MODE in ('rework', 'gated-rework') and first)
     result = {'task_id': task_id, 'submission_digest': fingerprint, 'verdict': 'needs_changes' if needs else 'accepted',
               'summary': 'Independent fixture review', 'issues': []}
     if needs:

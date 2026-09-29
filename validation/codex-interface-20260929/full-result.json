@@ -1,0 +1,20 @@
+{
+  "command": [
+    "/home/mye/src/llm/codinator/.venv/bin/python",
+    "-B",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "tests",
+    "-v"
+  ],
+  "environment": {
+    "PYTHONPATH": "src:tests",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "exit_code": 0,
+  "elapsed_seconds": 145.2392933368683,
+  "outside_host_sandbox": true,
+  "model_calls": 0
+}
