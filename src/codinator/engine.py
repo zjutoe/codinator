@@ -3,9 +3,10 @@ import os
 from pathlib import Path
 import time
 
-from .agents import reviewer, worker
+from .agents import repair_delivery, reviewer, worker
 from .bytecode import clean_bytecode
 from .config import positive
+from .delivery import DeliveryError, select_delivery, selected_delivery, validate_delivery
 from .files import Problem, assert_scope, changes, digest, preserve, snapshot, write_json
 from .process import Interrupted, process_start, run_process, stop_group
 from .review_resume import checkpoint, require_unfinished_review
@@ -151,10 +152,18 @@ class Engine:
                     after = before
                 else:
                     timeout = _budget_timeout(task['deadline'], attempt_seconds)
-                    pi_status = worker(task, attempt, private, self.sandbox, self.options(task_id, timeout), self.pi_bin)
+                    worker(task, attempt, private, self.sandbox, self.options(task_id, timeout), self.pi_bin)
                     after = snapshot(root, m['excludes'])
                     write_json(attempt / 'implementation.json', after)
                     preserve(root, after, self.store.root / 'blobs')
+                    delivery = attempt / 'delivery'
+                    delivery_error = None
+                    try:
+                        pi_status = validate_delivery(delivery, task_id, task['round'], task['attempt'])
+                    except DeliveryError as exc:
+                        delivery_error = exc
+                        write_json(attempt / 'delivery-error.json',
+                                   {'errors': exc.errors, 'repairable': exc.repairable})
                     after = clean_bytecode(root, before, after, m['allowed_paths'], m['excludes'],
                                            attempt.parent, self.store.root / 'blobs')
                     write_json(attempt / 'submission.json', after)
@@ -162,8 +171,30 @@ class Engine:
                     preserve(root, after, self.store.root / 'blobs')
                     assert_scope(before, after, m['allowed_paths'])
                     self.store.update(task_id, expected_digest=digest(after))
+                    if delivery_error is not None:
+                        if not delivery_error.repairable:
+                            raise delivery_error
+                        if self.store.get(task_id)['control']:
+                            raise Interrupted('Pause/cancel requested before delivery repair')
+                        # A delivery-only repair is a frozen stage, not another implementation.
+                        self.store.update(task_id, state='checking', phase='delivery-repair')
+                        timeout = _budget_timeout(task['deadline'], min(attempt_seconds, 300))
+                        try:
+                            repair_delivery(task, attempt, private, self.sandbox,
+                                            self.options(task_id, timeout), delivery_error, self.pi_bin)
+                        finally:
+                            if digest(snapshot(root, m['excludes'])) != digest(after):
+                                raise Problem('Workspace changed during delivery repair; submission is invalid')
+                        delivery = attempt / 'delivery-repair/delivery'
+                        try:
+                            pi_status = validate_delivery(delivery, task_id, task['round'], task['attempt'])
+                        except DeliveryError as exc:
+                            write_json(attempt / 'delivery-repair/delivery-error.json',
+                                       {'errors': exc.errors, 'repairable': False})
+                            raise
+                    select_delivery(attempt, delivery)
                     if pi_status == 'blocked':
-                        raise Problem('Pi reported blocked; read delivery/summary.md')
+                        raise Problem(f'Pi reported blocked; read {delivery / "summary.md"}')
                     self.store.update(task_id, state='checking', phase='checks')
                     for check in m['checks']:
                         check_timeout = _budget_timeout(task['deadline'], check['timeout_seconds'])
@@ -177,6 +208,7 @@ class Engine:
                             failures.append(f"{check['name']}: {exc}")
                 if digest(snapshot(root, m['excludes'])) != digest(after):
                     raise Problem('Workspace changed during verification; submission is invalid')
+                selected_delivery(evidence_dir or attempt)
                 if failures:
                     feedback = 'Required controller checks failed:\n' + '\n'.join(failures)
                     verdict = {'verdict': 'needs_changes', 'summary': feedback,
@@ -188,6 +220,7 @@ class Engine:
                                        sandbox=self.sandbox, private=private, evidence_dir=evidence_dir)
                     if digest(snapshot(root, m['excludes'])) != digest(after):
                         raise Problem('Workspace changed during review; rejecting stale verdict')
+                    selected_delivery(evidence_dir or attempt)
                     if review_only:
                         checkpoint(self.store, task, self.sandbox)
                     feedback = json.dumps(verdict, ensure_ascii=False, indent=2)

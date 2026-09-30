@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 from .files import Problem, assert_scope, changes, digest, file_info
+from .delivery import selected_delivery, validate_delivery
 
 
 def require_unfinished_review(attempt):
@@ -51,12 +52,14 @@ def checkpoint(store, task, sandbox, *, accepted=False):
         return document(name + '/launch.json')
 
     # Only the controller can attest that Pi delivery and all checks were accepted.
-    attempt, entered_review = 0, False
+    attempt, entered_review, entered_repair = 0, False, False
     for row in store.db.execute("SELECT payload FROM events WHERE task_id=? AND kind='state' ORDER BY seq", (task['id'],)):
         fields = json.loads(row[0])
         attempt = fields.get('attempt', attempt)
         if attempt == number and fields.get('state') == 'reviewing' and fields.get('phase') == 'codex':
             entered_review = True
+        if attempt == number and fields.get('state') == 'checking' and fields.get('phase') == 'delivery-repair':
+            entered_repair = True
     if not entered_review:
         raise Problem('No controller checkpoint proving this attempt reached review')
     if not accepted:
@@ -75,35 +78,49 @@ def checkpoint(store, task, sandbox, *, accepted=False):
     if document('diff.json') != {'paths': changes(before, submitted), 'digest': fingerprint}:
         raise Problem('Review diff does not match the submitted snapshot')
 
-    successful_process('pi', ('stdout.jsonl', 'stderr.txt'))
-    identity = document('pi-runtime.json')
-    if (identity.get('provider'), identity.get('model'), identity.get('thinking')) != ('bonsai', 'bonsai2-27b', 'xhigh'):
-        raise Problem('Unexpected Pi runtime identity in review evidence')
-    ack, settled, stop = False, False, None
-    with (source / 'pi/stdout.jsonl').open() as stream:
-        for line in stream:
-            if not line.strip():
-                continue
-            event = json.loads(line)
-            if type(event) is not dict:
-                raise Problem('Invalid Pi protocol evidence')
-            if event.get('type') == 'response' and event.get('id') == 'prompt':
-                ack = event.get('success') is True
-            if event.get('type') == 'agent_settled':
-                settled = True
-            message = event.get('message')
-            if event.get('type') == 'message_end' and type(message) is dict and message.get('role') == 'assistant':
-                stop = message.get('stopReason')
-    if not (ack and settled and stop == 'stop'):
-        raise Problem('Pi completion protocol evidence is missing or unsuccessful')
-    completion = document('delivery/completion.json')
-    if (type(completion.get('round')) is not int or type(completion.get('attempt')) is not int
-            or completion != {'task_id': task['id'], 'round': task['round'],
-                              'attempt': number, 'status': 'awaiting_review'}):
+    def successful_pi(prefix=''):
+        successful_process(prefix + 'pi', ('stdout.jsonl', 'stderr.txt'))
+        identity = document(prefix + 'pi-runtime.json')
+        if (identity.get('provider'), identity.get('model'), identity.get('thinking')) != ('bonsai', 'bonsai2-27b', 'xhigh'):
+            raise Problem('Unexpected Pi runtime identity in review evidence')
+        ack, settled, stop = False, False, None
+        with (source / (prefix + 'pi/stdout.jsonl')).open() as stream:
+            for line in stream:
+                if not line.strip():
+                    continue
+                event = json.loads(line)
+                if type(event) is not dict:
+                    raise Problem('Invalid Pi protocol evidence')
+                if event.get('type') == 'response' and event.get('id') == 'prompt':
+                    ack = event.get('success') is True
+                if event.get('type') == 'agent_settled':
+                    settled = True
+                message = event.get('message')
+                if event.get('type') == 'message_end' and type(message) is dict and message.get('role') == 'assistant':
+                    stop = message.get('stopReason')
+        if not (ack and settled and stop == 'stop'):
+            raise Problem('Pi completion protocol evidence is missing or unsuccessful')
+
+    successful_pi()
+    delivery = selected_delivery(source)
+    if (source / 'delivery-selection.json').exists():
+        evidence('delivery-selection.json')
+        evidence('delivery-contract.json')
+        evidence('submit-delivery.py')
+    if delivery != source / 'delivery':
+        if not entered_repair:
+            raise Problem('No controller checkpoint proving delivery repair')
+        error = document('delivery-error.json')
+        if error.get('repairable') is not True or not error.get('errors'):
+            raise Problem('Missing recoverable delivery error evidence')
+        successful_pi('delivery-repair/')
+        for name in ('delivery-contract.json', 'submit-delivery.py', 'worker-prompt.txt'):
+            evidence('delivery-repair/' + name)
+    prefix = delivery.relative_to(source).as_posix() + '/'
+    document(prefix + 'completion.json')
+    if validate_delivery(delivery, task['id'], task['round'], number) != 'awaiting_review':
         raise Problem('Pi completion identity/status does not match the review source')
-    summary = evidence('delivery/summary.md')
-    if summary.stat().st_size > 1_000_000 or not summary.read_text().strip():
-        raise Problem('Missing or invalid Pi summary')
+    evidence(prefix + 'summary.md')
     for check in manifest['checks']:
         launch = successful_process('checks/' + check['name'], ('stdout.txt', 'stderr.txt'))
         if launch.get('argv') != sandbox.wrap(check['argv'], manifest['workspace']) or launch.get('cwd') != manifest['workspace']:

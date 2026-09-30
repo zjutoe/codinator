@@ -77,7 +77,12 @@ ready → implementing → checking → reviewing → accepted
 必需检查失败或独立审查要求修改时，控制器在剩余轮次内自动安排 Pi 返工。
 默认最多四轮实施，总墙钟四小时，单次 Pi 或 Codex 进程上限两小时；
 实施、检查、审查与返工共享总时间，暂停时间也计入总墙钟。相同 issue ID 不提前终止返工。
-连接故障、输出截断、缺少交付、越界改动和不可信验收结果会阻塞任务；不重放不确定提示。
+连接故障、进程输出截断、越界改动和不可信验收结果会阻塞任务；不重放不确定提示。
+
+实施交付采用只读的 attempt 契约与绑定提交工具，Pi 只提供汇总和交付状态。
+Pi 确认正常结束且范围检查通过后，缺失或格式错误的交付可在剩余预算内接受一次、最多五分钟的
+专项修复，工作树及原证据只读。控制器固定选用的交付后再执行检查与独立审查。
+排除条件与证据规则见 [实施交付与一次自动修复](docs/codex-interface.md#实施交付与一次自动修复)。
 
 普通 `resume` 创建新的实施 attempt，旧证据保留。Pi 已完整交付、检查通过，
 仅 Codex 审查因额度、连接或进程中断而未完成时，可以显式只恢复审查：
@@ -88,7 +93,8 @@ codinator resume TASK_ID --review-only
 codinator resume TASK_ID --review-only --attempt-seconds 7200 --extra-seconds 3600
 ```
 
-仅审查恢复会核对原交付、检查证据与冻结快照，创建新审查 attempt，不增加实施轮次。
+仅审查恢复会核对控制器选用的交付、检查证据与冻结快照，创建新审查 attempt，不增加实施轮次。
+若交付经过修复，还会验证两个 Pi 进程的证据；已通过检查的旧协议历史交付仍受支持。
 缺失或损坏证据、工作树变化、检查失败、未完成实施，以及已有但尚未接收的 verdict，都会拒绝该操作。
 若新审查要求返工，服务继续安排下一轮实施与检查。
 
@@ -137,13 +143,18 @@ tasks/<task>/
   manifest.json / intake.json          发布时的契约与完整快照
   handoff.md                          发布时的原契约文本
   attempt-0001/
-    implementation.json              后台 Pi 完整交付后的原始现场（归档缓存之前）
+    implementation.json              后台 Pi 确认正常结束后的原始现场（归档缓存之前）
     before.json / submission.json     文件内容、类型、模式、Git HEAD/index
     diff.json                         本轮改动范围与快照摘要
     pi-runtime.json                   RPC 报告的实际客户端模型身份
     pi/                               原始 RPC、stderr、进程与退出记录
+    delivery-contract.json            只读的任务／轮次／attempt 与目标目录绑定
+    submit-delivery.py                 绑定的汇总／状态提交命令
     delivery/summary.md                Pi 的改动、偏差、未运行项
     delivery/completion.json           本轮提交标识
+    delivery-error.json                原交付无效时的逐字段诊断
+    delivery-repair/                   可选的一次修复：绑定工具、契约、Pi 证据及 delivery/
+    delivery-selection.json            控制器选定的交付目录及两个文件身份
     checks/<name>/                    调度器独立执行的命令、退出码、原始输出
     codex/                            独立审计的原始事件与退出记录
     review-delivery/verdict.json       绑定本轮摘要的结构化验收结果
@@ -160,7 +171,7 @@ notifications/                        通知的每次发送尝试
 Pi 在 bubblewrap 中运行：主机文件默认只读，Git 元数据与现存非授权文件只读；
 允许文件所需父目录可写以支持原子替换。新建越界条目会被事后范围检查拒绝，
 这不等于所有非法新文件都在创建前被阻断。超范围时保留现场并暂停，不自动删除。
-后台完整交付后会先留存原始现场，再归档严格识别的新 Python 缓存；有其他越界时不清理，
+后台 Pi 进程与 RPC 确认正常结束后会先留存原始现场，再归档严格识别的新 Python 缓存；有其他越界时不清理，
 冻结检查／审查不清理。未完成协议与中断恢复仍要求检查原始证据和快照，详见主界面协议。
 Codex 也有外层进程隔离，工作树只读，CLI 内层显式 `--sandbox read-only`、`-a never`。
 两种 agent 都启用父进程退出清理与 PID namespace；没有不受限运行的自动降级。

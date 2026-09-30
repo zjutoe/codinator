@@ -29,7 +29,7 @@ codinator status TASK_ID
 
 服务自动处理已发布任务，正常 `needs_changes` 在剩余轮次内自动交回 Pi。主会话通过管理命令操作任务，不直接改执行中的工作树或数据库。主会话可以查看证据、解释反馈，并按已有授权决定显式恢复；改变范围、预算或研究语义仍需遵循任务契约与用户授权。独立审查进程固定使用原模型和原验收条件，主会话不能替它宣布通过。
 
-需要精确查看过程时，先从 `status` 的 `attempt_evidence` 找到当轮目录，再按需读取 `delivery/summary.md`、`pi/stdout.jsonl`、`checks/*/result.json`、`codex/result.json`。JSONL 是原始事件，不能将任意模型文字当成控制器结论。原始认证、配置和会话不应复制到聊天或版本库。
+需要精确查看过程时，先从 `status` 的 `attempt_evidence` 找到当轮目录，再按 `delivery-selection.json` 找到选定的 `summary.md`，并按需读取当轮的 `pi/stdout.jsonl`、`checks/*/result.json`、`codex/result.json`。发生交付修复时，被检查的汇总位于 `delivery-repair/delivery/summary.md`；旧协议没有选择收据的历史 attempt 使用 `delivery/summary.md`。JSONL 是原始事件，不能将任意模型文字当成控制器结论。原始认证、配置和会话不应复制到聊天或版本库。
 
 状态查询是只读操作，不创建数据库、不迁移旧 schema、不恢复任务，也不启动 Pi。JSON 提供以下字段：
 
@@ -49,6 +49,43 @@ codinator status TASK_ID
 
 `status` 不判断 systemd 健康；任务一直 `ready` 时检查 `systemctl --user is-active codinator.service` 与 `journalctl --user -u codinator.service -n 50 --no-pager`。未创建任务库或状态目录错误时，查询报错且不会静默新建一个空库。服务启动后尚未提交任务，查询返回空数组。
 
+## 实施交付与一次自动修复
+
+每次实施派发都由控制器生成只读的 `delivery-contract.json` 和绑定该契约的 `submit-delivery.py`。
+契约固定任务编号、实施轮次、attempt 和绝对交付目录。Pi 收尾时重新读取契约，在 `/tmp` 写好
+汇总，再执行提示中的绑定命令，仅传 `--summary` 和 `--status awaiting_review|blocked`。
+任务身份和目录没有可覆盖的命令行参数；不手写 `completion.json`，也不在工作树新建 `delivery/`。
+契约位置与绑定命令同时通过 Pi 的 `--append-system-prompt` 保留在系统提示中，
+不依赖会话压缩摘要记住路径；上下文压缩后仍应读取契约恢复这些约束。
+
+提交工具与控制器共用校验器：汇总须为非空 UTF-8，两个文件须为普通文件、无链接祖先且各不超过
+1,000,000 字节；completion 只允许 `task_id`、`round`、`attempt`、`status` 四个字段。
+轮次和 attempt 必须为整数，布尔值不能替代；重复 JSON 键、额外字段和身份错误均会明确拒绝。
+工具先原子发布汇总，再发布 completion。相同提交可重复执行；已有内容冲突或无效时拒绝覆盖。
+仅汇总已发布而 completion 尚未发布的中断，可用相同汇总重试完成。JSON 回执中的 `submitted`
+只表示提交成功，之后仍需控制器检查与独立审查，不能据此宣称任务已接受。
+
+若 Pi 进程及 RPC 已确认正常结束，缺文件、空汇总或 JSON 格式／身份错误会记录到
+`delivery-error.json`，逐项给出错误路径、预期值、实际值及是否允许修复。控制器先保存原始现场、
+核对修改范围并冻结提交快照，才允许在当前 attempt 中启动**最多一次**仅修复交付的 Pi 进程。
+此时状态为 `checking`，阶段为 `delivery-repair`；时间上限为 300 秒、单进程上限和总剩余预算
+三者的最小值，不增加实施轮次，也不延长总截止时间。
+
+修复进程的工作树和原 attempt 证据只读，交付输出只写新的 `delivery-repair/delivery/`；
+临时文件仍使用 `/tmp`，运行时配置与会话使用独立私有目录。它只能据原证据整理汇总并提交，
+不能修改源代码、重跑审计或检查、安装依赖或改动原交付。控制器再次核对冻结快照和新交付，
+修复成功后继续正常必需检查与独立审查。原坏交付始终保留，不自动从工作树其他目录搜索或迁移文件。
+
+明确报告 `blocked`（包括能识别为 blocked 的错误格式）、链接、非普通文件、超大或超深 JSON、越界修改、
+进程失败和 RPC 输出截断都不进入自动修复。修复再次失败或报告 blocked 时，任务仍阻塞；
+不能通过反复修复把研究缺陷改写为已完成，也不重放执行结果不确定的提示。
+
+控制器用不可覆盖的 `delivery-selection.json` 记录最终选用的原交付或修复交付，保存两个文件的
+内容哈希、大小和模式。检查、审查和仅审查恢复均使用该选择，文件身份变化会拒绝继续。
+新协议缺少选择收据会明确报错；仅旧协议中已通过检查的历史证据可沿用原交付目录。
+仅审查恢复还会核对原 Pi 和修复 Pi 的成功退出、RPC 完成及模型身份，不重新运行交付修复。
+模拟测试与真实模型联调证据应分别记录，不能用本地测试推断上下文压缩后的真实模型行为已验证。
+
 ## 暂停与恢复
 
 ```bash
@@ -59,7 +96,7 @@ codinator resume TASK_ID
 
 暂停是明确操作；阅读日志、询问进度、退出主界面不等于暂停。运行中的进程停止需要时间，以控制器最终状态为准。恢复前阅读 `reason` 和证据，核对工作树与进程；普通恢复安排新实施 attempt，旧证据保留，不是向旧进程重发提示。
 
-已完整交付、检查通过，仅独立审查因基础设施中断时，可使用 `codinator resume TASK_ID --review-only`；控制器验证旧提交及检查证据后只运行新审查。存在未协调的 verdict、证据损坏、快照变化或未完成实施会拒绝此操作。额度耗尽时不要把反复 resume 当成修复。
+已完整交付（包括上述一次修复后选定的交付）、检查通过，仅独立审查因基础设施中断时，可使用 `codinator resume TASK_ID --review-only`；控制器验证旧提交及检查证据后只运行新审查。存在未协调的 verdict、证据损坏、快照变化或未完成实施会拒绝此操作。额度耗尽时不要把反复 resume 当成修复。
 
 后台总时间仍包括暂停时间。确需额外预算且已获授权时，使用 `--extra-seconds N` 或 `--attempt-seconds N` 明确记录，不改旧 manifest。主会话无需逐工具或逐轮调用模型监控；按用户查询读取状态，或使用明确配置的 `notify_thread` 接收终态通知即可。通知失败不改变结果，也不阻止后台返工。
 
@@ -101,7 +138,7 @@ codinator resume TASK_ID
 
 ## Python 缓存与故障证据
 
-Pi 实施进程将默认 Python 缓存目录放在仓外。`python -I` 会忽略环境变量，子进程仍需显式 `-B`。后台 Pi 成功结束协议并完整交付后，先保存 `implementation.json` 和内容 blobs，再严格识别并归档新增字节码，最后冻结 `submission.json` 供检查和审查。
+Pi 实施进程将默认 Python 缓存目录放在仓外。`python -I` 会忽略环境变量，子进程仍需显式 `-B`。后台 Pi 成功结束进程及 RPC 协议后，先保存 `implementation.json` 和内容 blobs，再严格识别并归档新增字节码，最后冻结 `submission.json`。需要的交付修复及后续检查、审查均使用该冻结快照。
 
 只处理新增、非链接、匹配控制器 Python tag/magic 且对应源码存在的缓存；有其他越界时全部拒绝。原文件先留证再移入唯一 `cache-cleanup-*/removed/`，跨文件系统或中途失败不回退到删除。失败记录及旧 attempt 保留。检查／审查期间不清理缓存，冻结快照变化会阻塞。
 

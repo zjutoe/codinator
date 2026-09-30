@@ -307,7 +307,7 @@ class EngineTests(unittest.TestCase):
              patch('codinator.engine.worker', side_effect=AssertionError('Pi must not run')):
             self.engine.run('test')
         self.assertEqual(self.store.get('test')['state'], 'blocked')
-        self.assertIn('evidence', self.store.get('test')['reason'].lower())
+        self.assertIn('selection_mismatch', self.store.get('test')['reason'])
 
     def test_review_only_rechecks_evidence_after_review(self):
         source = self.review_failure()
@@ -322,7 +322,7 @@ class EngineTests(unittest.TestCase):
         with patch('codinator.engine.reviewer', side_effect=mutate):
             self.engine.run('test')
         self.assertEqual(self.store.get('test')['state'], 'blocked')
-        self.assertIn('evidence changed', self.store.get('test')['reason'])
+        self.assertIn('selection_mismatch', self.store.get('test')['reason'])
 
     def test_review_only_needs_changes_returns_to_normal_implementation(self):
         self.review_failure()

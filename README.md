@@ -90,8 +90,14 @@ When required checks fail or independent review requests changes, the controller
 schedules Pi rework within the remaining round budget. Defaults are four implementation rounds,
 four hours of total wall-clock time, and two hours per Pi or Codex process.
 Implementation, checks, review, and rework share the total budget; time spent paused also counts.
-Repeated issue IDs do not stop rework early. Connection failures, truncated output, missing delivery,
+Repeated issue IDs do not stop rework early. Connection failures, truncated process output,
 out-of-scope changes, and untrustworthy verdicts block the task. Prompts with uncertain execution outcomes are never replayed.
+
+Implementation delivery uses a read-only attempt contract and a bound submission tool: Pi supplies only
+a summary and disposition. After confirmed Pi completion and scope checks, a missing or malformed delivery
+can receive one repair of at most five minutes within the remaining budget, with the workspace and original
+evidence read-only. The controller pins the selected delivery before checks and independent review.
+See [delivery and bounded repair](docs/codex-interface.md#实施交付与一次自动修复) (Chinese) for exclusions and evidence rules.
 
 A normal `resume` creates a new implementation attempt and preserves previous evidence.
 If Pi completed delivery and all checks passed, but Codex review was interrupted by quota,
@@ -103,8 +109,9 @@ codinator resume TASK_ID --review-only
 codinator resume TASK_ID --review-only --attempt-seconds 7200 --extra-seconds 3600
 ```
 
-Review-only recovery verifies the original delivery, check evidence, and frozen snapshot,
+Review-only recovery verifies the controller-selected delivery, check evidence, and frozen snapshot,
 then creates a new review attempt without increasing the implementation round.
+If delivery was repaired, it also verifies both Pi processes; checked historical deliveries remain supported.
 It rejects missing or damaged evidence, workspace changes, failed checks, incomplete implementation,
 and verdicts already written to disk but not yet recorded by the controller.
 If the new review requests changes, the service schedules the next implementation round and its checks.
@@ -166,13 +173,18 @@ tasks/<task>/
   manifest.json / intake.json         Published contract and complete baseline snapshot
   handoff.md                         Original contract text at publication
   attempt-0001/
-    implementation.json             Raw workspace after Pi delivery, before cache archival
+    implementation.json             Raw workspace after confirmed Pi completion, before cache archival
     before.json / submission.json    File contents, types, modes, Git HEAD/index
     diff.json                        Changed paths and snapshot digest
     pi-runtime.json                  Actual client model identity reported by RPC
     pi/                              Raw RPC, stderr, process and exit records
+    delivery-contract.json           Read-only task/round/attempt and destination binding
+    submit-delivery.py                Bound summary/status submission command
     delivery/summary.md               Pi changes, deviations, and items not run
     delivery/completion.json          Submission identifier for this attempt
+    delivery-error.json               Field-level diagnostics, if original delivery is invalid
+    delivery-repair/                  Optional single repair: bound tool, contract, Pi evidence, delivery/
+    delivery-selection.json           Controller-selected directory and both file identities
     checks/<name>/                   Controller-run commands, exit codes, raw output
     codex/                           Raw independent review events and exit records
     review-delivery/verdict.json      Structured verdict bound to the submission digest
@@ -190,7 +202,7 @@ Pi runs inside bubblewrap. Host files are read-only by default, as are Git metad
 outside the allowed scope. Parent directories needed for allowed files are writable to support atomic replacement.
 New out-of-scope entries are rejected by a subsequent scope check; this does not prevent every unauthorized
 new file from being created. Scope violations preserve the workspace and stop execution rather than deleting files.
-After complete background delivery, the controller preserves the raw workspace, then archives only strictly
+After confirmed Pi process and RPC completion, the controller preserves the raw workspace, then archives only strictly
 recognized new Python caches. It performs no cleanup when other scope violations exist or during frozen checks and review.
 Incomplete protocols and interrupted attempts still require inspection of the original evidence and snapshots;
 see the interface protocol for details.
