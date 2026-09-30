@@ -1,26 +1,32 @@
 # Codinator
 
-## 摘要
+[Chinese version](README.md)
 
-Codinator 的设计初衷是实现 **Codex 与 Pi 的协作，即强模型与弱模型的协作**。
-Codex 使用强模型负责需求分析、任务规划与独立验收，Pi 调用较弱模型（当前为 Bonsai）
-负责具体代码实施，并根据审查反馈修正。控制器将实施、检查、验收和返工串联为可持续运行、
-可追溯的流程，减少人工派发任务、跟踪进度和反复转交修改意见的负担。
+## Overview
 
-以 **Codex 为唯一交互界面**：在 Codex 主会话中讨论需求、发布任务、查询状态和处理异常；
-独立后台服务负责 Pi + Bonsai 实施、必需检查、Codex 独立验收与自动返工。
-关闭主界面不会暂停后台任务，只有独立验收结论可以接受工作。
+Codinator was designed to enable **collaboration between Codex and Pi: a stronger model working with a weaker model**.
+Codex uses a strong model for requirements analysis, task planning, and independent acceptance review.
+Pi runs a weaker model (currently Bonsai) to implement code and make revisions based on review feedback.
+The controller connects implementation, checks, review, and rework into a persistent, traceable workflow,
+reducing the effort of manually dispatching tasks, tracking progress, and passing feedback between agents.
 
-项目提供任务暂停与显式恢复、修改范围和执行预算控制、沙箱隔离及逐轮证据留存；
-经明确授权，还可在验收通过后提交代码并快进合并。
+**Codex is the only interactive interface.** Use the main Codex session to discuss requirements,
+publish tasks, inspect status, and handle exceptions. An independent background service runs
+Pi + Bonsai implementation, required checks, independent Codex review, and automatic rework.
+Closing the main interface does not pause background tasks. Only an independent review verdict can accept work.
 
-## 运行环境
+The project supports task pausing and explicit recovery, modification scope and execution budgets,
+sandbox isolation, and evidence preservation for each attempt. With explicit authorization,
+it can also commit accepted changes and merge them by fast-forward.
 
-面向 Linux、单用户、串行任务。需要 Python 3.11+，以及已安装并完成认证的
-`pi`、`codex`、`git`、`bwrap`；Python 运行时无第三方依赖。
-Pi 通过 RPC 执行实施任务，Codex 通过独立审查进程验收，均由控制器调度。
+## Requirements
 
-## 安装与服务
+Designed for Linux, a single user, and serial task execution. Requires Python 3.11+,
+installed `git` and `bwrap`, and installed, authenticated `pi` and `codex` clients.
+The Python runtime has no third-party dependencies.
+The controller dispatches Pi implementation through RPC and Codex acceptance through a separate review process.
+
+## Installation and service setup
 
 ```bash
 python3 -m venv --system-site-packages .venv
@@ -34,24 +40,28 @@ systemctl --user enable --now codinator.service
 systemctl --user is-active codinator.service
 ```
 
-`doctor` 只检查本地依赖和沙箱，不调用模型。`service` 只输出 unit；生成时保存 PATH 和代理环境。
-已有安装应先核对运行任务与配置，在服务空闲时更新和重启。
-需要代理时，在生成 unit 的命令上设置，例如：
+`doctor` checks local dependencies and sandbox availability without calling models.
+`service` only prints a unit file, capturing the current PATH and proxy environment.
+For an existing installation, inspect active tasks and configuration first, then update and restart when the service is idle.
+If a proxy is required, set it when generating the unit:
 
 ```bash
 env http_proxy=http://127.0.0.1:8888 https_proxy=http://127.0.0.1:8888 \
     .venv/bin/codinator service > ~/.config/systemd/user/codinator.service
 ```
 
-地址按本机环境调整。Pi + Bonsai 子进程移除代理并直连本机服务；Codex 审查与通知保留服务代理。
-全局代理和客户端配置不会被修改。实施固定为 `bonsai / bonsai2-27b / xhigh`，
-验收固定为 `gpt-6-astra / xhigh`。Pi 实际客户端身份由 RPC 校验和记录，不以模型自述作证。
+Adjust the address for your environment. Pi + Bonsai subprocesses remove proxy variables and connect directly
+to the local service; Codex review and notification processes retain the service's proxy settings.
+Global proxy and client configuration remain unchanged. Implementation is fixed to
+`bonsai / bonsai2-27b / xhigh`, and review to `gpt-6-astra / xhigh`.
+The controller verifies and records Pi's actual client identity through RPC, rather than relying on a model's self-description.
 
-## 在 Codex 中管理任务
+## Managing tasks from Codex
 
-复制 [examples/task.json](examples/task.json)，将工作树、交接文档、允许路径和检查命令改为真实值。
-可用 [示例交接文档](examples/demo-handoff.md) 在空的独立仓库中准备任务。
-workspace 必须是独立 Git 仓库或 worktree 的根目录；发布时保存包括未提交改动在内的基线。
+Copy [examples/task.json](examples/task.json) and set the actual workspace, handoff document,
+allowed paths, and check commands. Use the [sample handoff](examples/demo-handoff.md) to prepare
+a task in an empty, separate repository. The workspace must be the root of a separate Git repository
+or worktree. Publication captures its baseline, including uncommitted changes.
 
 ```bash
 .venv/bin/codinator submit /absolute/path/to/task.json
@@ -61,12 +71,14 @@ workspace 必须是独立 Git 仓库或 worktree 的根目录；发布时保存�
 .venv/bin/codinator cancel TASK_ID
 ```
 
-`submit` 是明确派发授权，服务仅处理已发布任务。`status` 只读，显示状态、原因、轮次、
-attempt、证据位置和带 attempt 标识的最近审查；它不会恢复任务或启动模型。
-`serve` 是供独立用户服务使用的控制器入口。日常由主 Codex 会话调用上述管理命令。
-操作与故障处理见 [Codex 主界面协议](docs/codex-interface.md)。
+`submit` explicitly authorizes dispatch; the service only processes published tasks.
+`status` is read-only. It reports the state, reason, round, attempt, evidence paths, and latest review
+with its attempt identifier. It never resumes a task or starts a model.
+`serve` is the controller entry point for the independent user service. For everyday use,
+the main Codex session invokes the management commands above.
+See the [Codex interface protocol](docs/codex-interface.md) (Chinese) for operations and troubleshooting.
 
-## 执行与恢复
+## Execution and recovery
 
 ```text
 ready → implementing → checking → reviewing → accepted
@@ -74,117 +86,145 @@ ready → implementing → checking → reviewing → accepted
              └──── needs_changes ────┘
 ```
 
-必需检查失败或独立审查要求修改时，控制器在剩余轮次内自动安排 Pi 返工。
-默认最多四轮实施，总墙钟四小时，单次 Pi 或 Codex 进程上限两小时；
-实施、检查、审查与返工共享总时间，暂停时间也计入总墙钟。相同 issue ID 不提前终止返工。
-连接故障、输出截断、缺少交付、越界改动和不可信验收结果会阻塞任务；不重放不确定提示。
+When required checks fail or independent review requests changes, the controller automatically
+schedules Pi rework within the remaining round budget. Defaults are four implementation rounds,
+four hours of total wall-clock time, and two hours per Pi or Codex process.
+Implementation, checks, review, and rework share the total budget; time spent paused also counts.
+Repeated issue IDs do not stop rework early. Connection failures, truncated output, missing delivery,
+out-of-scope changes, and untrustworthy verdicts block the task. Prompts with uncertain execution outcomes are never replayed.
 
-普通 `resume` 创建新的实施 attempt，旧证据保留。Pi 已完整交付、检查通过，
-仅 Codex 审查因额度、连接或进程中断而未完成时，可以显式只恢复审查：
+A normal `resume` creates a new implementation attempt and preserves previous evidence.
+If Pi completed delivery and all checks passed, but Codex review was interrupted by quota,
+connectivity, or process failure, you can explicitly retry only the review:
 
 ```bash
 codinator resume TASK_ID --review-only
-# 确需调整预算时显式指定：
+# Explicitly adjust budgets when needed:
 codinator resume TASK_ID --review-only --attempt-seconds 7200 --extra-seconds 3600
 ```
 
-仅审查恢复会核对原交付、检查证据与冻结快照，创建新审查 attempt，不增加实施轮次。
-缺失或损坏证据、工作树变化、检查失败、未完成实施，以及已有但尚未接收的 verdict，都会拒绝该操作。
-若新审查要求返工，服务继续安排下一轮实施与检查。
+Review-only recovery verifies the original delivery, check evidence, and frozen snapshot,
+then creates a new review attempt without increasing the implementation round.
+It rejects missing or damaged evidence, workspace changes, failed checks, incomplete implementation,
+and verdicts already written to disk but not yet recorded by the controller.
+If the new review requests changes, the service schedules the next implementation round and its checks.
 
-`--attempt-seconds` 覆盖之后单个模型进程的上限；`--extra-seconds` 延长总截止时间，
-若已过期则从恢复时计算新增时间。省略参数保留原预算；检查自己的超时不变。
-变更原子记录到 SQLite 事件，新 attempt 的 `budget.json` 保存生效预算，原 manifest 和旧证据不改写。
+`--attempt-seconds` overrides the time limit for subsequent individual model processes.
+`--extra-seconds` extends the overall deadline; if it has already expired, the added time starts at recovery.
+Omitting these options preserves the existing budgets. Individual check timeouts remain unchanged.
+Budget updates are recorded atomically in SQLite events, and each new attempt's `budget.json` records
+the effective values. The original manifest and previous evidence are not rewritten.
 
-服务启动时自动检查中断现场；手工执行 `recover` 也只做恢复核对，不派发任务。
-检查原因与证据后才能显式 `resume`。工作树偏离已记录快照时，需要人工核对并恢复，或发布新任务；
-控制器不会自动 reset、stash 或回滚。延长超时不能修复代理、额度或连接问题。
+The service examines interrupted work on startup. Manually running `recover` also only performs
+recovery checks; it does not dispatch tasks. Inspect the reason and evidence before explicitly resuming.
+If the workspace differs from the recorded snapshot, inspect and restore it manually or publish a new task.
+The controller does not automatically reset, stash, or roll back changes.
+Increasing timeouts cannot fix proxy, quota, or connectivity problems.
 
-manifest 可通过 `integration` 显式授权验收后的 Pi 提交和快进合并。
-控制器核对接受快照与完整提交树，推广同一个提交，合并完成后才进入 `accepted`；不自动 push。
-未配置时，任务在验收接受后结束。授权和恢复规则见 [验收后集成](docs/codex-interface.md#验收后由-pi-提交并合并)。
+A manifest can explicitly authorize Pi to commit and fast-forward merge accepted changes through `integration`.
+The controller verifies the accepted snapshot and complete commit tree, promotes the same commit,
+and marks the task `accepted` only after the merge finishes. It never pushes automatically.
+Without this configuration, the task ends when review accepts it.
+See [integration after acceptance](docs/codex-interface.md#验收后由-pi-提交并合并) (Chinese) for authorization and recovery rules.
 
-## 升级边界
+## Upgrade boundaries
 
-本版移除原生 Pi 终端界面、前台 `run` 命令及单独的 Codex 探针；状态查询不再提供 `--mode`，
-结果也不再包含 `mode` 字段。所有操作统一使用后台任务的状态根目录。
-旧 `interactive/` 目录、任务契约和 attempt 证据保留在仓外，不自动迁移或重新派发。
-升级前结束旧界面会话并检查遗留任务，勿将其目录直接交给后台服务，或重复发布仍在执行的工作树。
+This version removes the native Pi terminal interface, the foreground `run` command,
+and the standalone Codex review probe. Status queries no longer accept `--mode`,
+and their results no longer contain a `mode` field. All operations use the background task state root.
+Existing `interactive/` directories, task contracts, and attempt evidence remain outside the repository;
+they are not automatically migrated or redispatched.
+Before upgrading, end old interface sessions and inspect outstanding tasks. Do not point the background
+service at their state directories or republish a workspace that is still being executed.
 
-## 任务契约
+## Task contracts
 
-`handoff` 是只读契约，不允许出现在 `allowed_paths` 内。执行者写独立的本轮汇总，
-SQLite 是状态的唯一来源；本版不自动改写项目 README／交接文档中的状态。
+`handoff` is a read-only contract and must not appear in `allowed_paths`.
+The implementer writes a separate summary for each attempt. SQLite is the sole source of workflow state;
+this version does not automatically update status text in project READMEs or handoff documents.
 
-- `allowed_paths`：精确文件，或以 `/` 结尾的目录；不支持通配符，不允许 `.git`／`.codex`／`.agents`。
-- `checks[].argv`：参数数组，直接启动进程，不经过隐式 shell。检查在只读工作树中运行；临时产物写 `/tmp`。
-- `excludes`：不纳入内容快照的环境／缓存路径；不能覆盖 tracked 文件，也不能与允许修改范围相交。
-- `max_rounds`、`max_seconds`、`attempt_seconds`：发布前确定的执行边界。
-- `notify_thread`：可选，用户明确指定的 Codex 会话 ID。未设置时保留本地通知，不向外发送。
+- `allowed_paths`: exact files, or directories ending in `/`. Wildcards and `.git`, `.codex`, and `.agents` are forbidden.
+- `checks[].argv`: an argument array used to launch a process directly, without an implicit shell. Checks run against a read-only workspace; write temporary output to `/tmp`.
+- `excludes`: environment or cache paths omitted from content snapshots. They cannot cover tracked files or overlap the allowed modification scope.
+- `max_rounds`, `max_seconds`, `attempt_seconds`: execution limits established before publication.
+- `notify_thread`: an optional Codex session ID explicitly selected by the user. Without it, notifications remain local and are not sent externally.
 
-新任务需要单独 worktree 时先人工／Codex 创建，明确环境与基线，再发布。
-Codinator 不自动创建工作树或搬迁虚拟环境，避免隐式丢失未提交文件及破坏绝对路径契约。
+If a task needs a separate worktree, create it manually or through Codex, establish its environment
+and baseline, then publish the task. Codinator does not automatically create worktrees or relocate
+virtual environments, avoiding implicit loss of uncommitted files or broken absolute-path contracts.
 
-## 证据与权限
+## Evidence and permissions
 
-默认状态目录 `~/.local/state/codinator`；可用 `--state-dir` 或 `CODINATOR_STATE_DIR` 指定。
-必须在任务工作树之外，不应提交到 Git。目录权限为 0700。
+The default state directory is `~/.local/state/codinator`; override it with `--state-dir`
+or `CODINATOR_STATE_DIR`. It must be outside the task workspace and should not be committed to Git.
+The directory permissions are 0700.
 
 ```text
-state.sqlite                          状态、轮次、通知 outbox
-blobs/<sha256>                        去重后的不可覆盖文件内容
+state.sqlite                         State, rounds, notification outbox
+blobs/<sha256>                       Deduplicated, immutable file contents
 tasks/<task>/
-  manifest.json / intake.json          发布时的契约与完整快照
-  handoff.md                          发布时的原契约文本
+  manifest.json / intake.json         Published contract and complete baseline snapshot
+  handoff.md                         Original contract text at publication
   attempt-0001/
-    implementation.json              后台 Pi 完整交付后的原始现场（归档缓存之前）
-    before.json / submission.json     文件内容、类型、模式、Git HEAD/index
-    diff.json                         本轮改动范围与快照摘要
-    pi-runtime.json                   RPC 报告的实际客户端模型身份
-    pi/                               原始 RPC、stderr、进程与退出记录
-    delivery/summary.md                Pi 的改动、偏差、未运行项
-    delivery/completion.json           本轮提交标识
-    checks/<name>/                    调度器独立执行的命令、退出码、原始输出
-    codex/                            独立审计的原始事件与退出记录
-    review-delivery/verdict.json       绑定本轮摘要的结构化验收结果
-    outcome.json / review.md           最终判定／返工要求
-private/                              运行时配置、会话与认证副本；不是公开证据
-notifications/                        通知的每次发送尝试
+    implementation.json             Raw workspace after Pi delivery, before cache archival
+    before.json / submission.json    File contents, types, modes, Git HEAD/index
+    diff.json                        Changed paths and snapshot digest
+    pi-runtime.json                  Actual client model identity reported by RPC
+    pi/                              Raw RPC, stderr, process and exit records
+    delivery/summary.md               Pi changes, deviations, and items not run
+    delivery/completion.json          Submission identifier for this attempt
+    checks/<name>/                   Controller-run commands, exit codes, raw output
+    codex/                           Raw independent review events and exit records
+    review-delivery/verdict.json      Structured verdict bound to the submission digest
+    outcome.json / review.md          Final outcome or rework requirements
+private/                             Runtime configuration, sessions, credential copies; not public evidence
+notifications/                       Each notification delivery attempt
 ```
 
-开发期命令保存在 Pi 原始工具事件中；调度器必需检查另有精确退出码和输出摘要。
-任意开发命令的文本输出不会被冒充为结构化测试计数。
-快照覆盖 tracked、untracked、普通 ignored 文件、目录、删除项、模式与符号链接；
-明确排除的环境／缓存内容不作完整性承诺。符号链接不跟随读取。
+Development commands are recorded in Pi's raw tool events. Required controller checks have their own
+exact exit codes and output digests. Arbitrary command output is never presented as structured test counts.
+Snapshots cover tracked, untracked, and ordinary ignored files, directories, deletions, modes, and symlinks.
+Explicitly excluded environment or cache contents have no integrity guarantee. Symlinks are not followed when reading content.
 
-Pi 在 bubblewrap 中运行：主机文件默认只读，Git 元数据与现存非授权文件只读；
-允许文件所需父目录可写以支持原子替换。新建越界条目会被事后范围检查拒绝，
-这不等于所有非法新文件都在创建前被阻断。超范围时保留现场并暂停，不自动删除。
-后台完整交付后会先留存原始现场，再归档严格识别的新 Python 缓存；有其他越界时不清理，
-冻结检查／审查不清理。未完成协议与中断恢复仍要求检查原始证据和快照，详见主界面协议。
-Codex 也有外层进程隔离，工作树只读，CLI 内层显式 `--sandbox read-only`、`-a never`。
-两种 agent 都启用父进程退出清理与 PID namespace；没有不受限运行的自动降级。
-这属于单用户工程隔离，不是对恶意同 UID 主机进程的安全防线。
+Pi runs inside bubblewrap. Host files are read-only by default, as are Git metadata and existing files
+outside the allowed scope. Parent directories needed for allowed files are writable to support atomic replacement.
+New out-of-scope entries are rejected by a subsequent scope check; this does not prevent every unauthorized
+new file from being created. Scope violations preserve the workspace and stop execution rather than deleting files.
+After complete background delivery, the controller preserves the raw workspace, then archives only strictly
+recognized new Python caches. It performs no cleanup when other scope violations exist or during frozen checks and review.
+Incomplete protocols and interrupted attempts still require inspection of the original evidence and snapshots;
+see the interface protocol for details.
 
-## 后台服务与通知
+Codex also has outer process isolation and a read-only workspace; its CLI explicitly uses
+`--sandbox read-only` and `-a never`. Both agents use parent-exit cleanup and PID namespaces.
+There is no automatic fallback to unrestricted execution. This is engineering isolation for a single user,
+not a security boundary against malicious host processes running under the same UID.
 
-服务只执行明确发布到所配置状态目录的任务。不同状态目录需生成对应 service 参数。
-生成的 unit 保存当时的 PATH 和代理环境，确保后台 Codex 仍经代理；Pi 的直连规则不变。
-注销后继续运行取决于本机 user service／linger 设置；程序不修改系统级策略。
+## Background service and notifications
 
-配置 `notify_thread` 后，以 `codex queue` 排队发送通过／阻塞通知。SQLite 终态与通知入队
-在同一事务中完成。发送失败不会回滚验收；`codinator notify` 可重试。
-发送采用至少一次语义，消息含稳定事件 ID；极端崩溃时可能重复，接收方应按 ID 去重。
-CLI 排队成功不代表用户已读；自动审计不依赖通知通道或当前聊天窗口。
+The service only executes tasks explicitly published to its configured state directory.
+Separate state directories require corresponding service arguments. Generated units retain the PATH
+and proxy environment present at generation time, so background Codex processes keep their proxy access;
+Pi continues to connect directly. Execution after logout depends on the local user-service and linger settings.
+Codinator does not change system-wide policies.
 
-## 验证与维护
+When `notify_thread` is configured, `codex queue` enqueues acceptance or blocked-state notifications.
+The terminal SQLite state and notification outbox entry are committed in one transaction.
+Delivery failures do not roll back acceptance; retry with `codinator notify`.
+Delivery uses at-least-once semantics and stable event IDs. A crash can cause duplicate delivery,
+so recipients should deduplicate by ID. Successful CLI enqueueing does not mean the user has read the message.
+Automatic review does not depend on notifications or the current chat window.
+
+## Validation and maintenance
 
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
-测试使用明确标识的假 agent 子进程，不调用模型；覆盖返工、恢复、截断、错误退出、
-并发修改、范围越界、通知重试、身份校验、证据发布及后台子进程清理。
-真实模型／沙箱联调证据另列于 `validation/`，不能用模拟测试代替。
-验证方法与历史证据说明见 [验证记录](validation/README.md)。
-项目的后续运行中，完整 state 目录可包含认证和原始工具输出，分享前只选所需脱敏证据。
+Tests use explicitly identified fake agent subprocesses and do not call models.
+They cover rework, recovery, truncation, failing exits, concurrent modification, scope violations,
+notification retries, identity checks, evidence publication, and background process cleanup.
+Real-model and sandbox integration evidence is recorded separately under `validation/`;
+mock tests cannot substitute for it. See the [validation records](validation/README.md) (Chinese)
+for verification methods and the limits of historical evidence.
+Complete runtime state may contain credentials and raw tool output. Share only the necessary, sanitized evidence.
