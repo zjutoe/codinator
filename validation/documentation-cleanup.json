@@ -1,0 +1,23 @@
+{
+  "date": "2026-09-30",
+  "original_commit": "2852f1b2c14f4892661cf60404dcaef68f465f52",
+  "status": "historical_display_only",
+  "note": "Only project-specific explanatory wording was generalized in these display copies. Retrieve unchanged originals with git show ORIGINAL_COMMIT:PATH. Recorded verdicts, attempts, source hashes and measurements are unchanged. No runtime evidence was modified and no historical model run was repeated.",
+  "files": [
+    {
+      "path": "validation/live-proxy-recovery-summary.json",
+      "original_sha256": "c958d03557d9663ca72cbbca9c65ef79e67b4bb836c76ce929dfd3eed9da3d04",
+      "display_sha256": "e1a74442daedd335057e263e9024f4bea9cce8f2b6d74f4846f139701ee8d362"
+    },
+    {
+      "path": "validation/pi-integration-20260929/live-summary.json",
+      "original_sha256": "110bc8ca95e6f56065cec5607b51b5f98abd18622ecd9bf9c00a7629e74f62ed",
+      "display_sha256": "e49371ec32d0af19f414f9e82aa13b1277b03f9331d7e79ccb43c96a3c005e8d"
+    },
+    {
+      "path": "validation/pi-integration-20260929/review.json",
+      "original_sha256": "284c62a90c1fdee457eae1157fa77613db3df656876bee3702e20b0b15b85145",
+      "display_sha256": "b72544ebf02683ef360ddbeb109f8edfe7c34d243fc0dffb70fd1d513c38ce46"
+    }
+  ]
+}

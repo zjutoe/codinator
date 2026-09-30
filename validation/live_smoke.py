@@ -1,6 +1,6 @@
 """Opt-in real Pi/Bonsai + Codex smoke in a newly created, isolated repository.
 
-No notifications, commits, pushes, or modifications to KMesh. Runtime state may
+No notifications, commits, pushes, or changes to existing workspaces. Runtime state may
 contain private credentials; print only its location and outcome.
 """
 import json

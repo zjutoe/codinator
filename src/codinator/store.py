@@ -31,7 +31,7 @@ class Store:
         if read_only:
             database = self.root / 'state.sqlite'
             if not database.is_file():
-                raise Problem(f'No task database at {database}; select the correct mode/state directory')
+                raise Problem(f'No task database at {database}; select the correct state directory')
             self.db = sqlite3.connect(database.as_uri() + '?mode=ro', uri=True, timeout=15)
             self.db.row_factory = sqlite3.Row
             return

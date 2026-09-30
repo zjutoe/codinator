@@ -49,7 +49,7 @@
   "limitations": [
     "Reviewer probes use real Git and deterministic fake model subprocesses; they are not model connectivity evidence.",
     "Reviewer regression checks sandbox invocation plus Git execution restrictions; real bubblewrap/live model execution is separately verified by the implementation owner.",
-    "This review does not attest deployment, KMesh integration or remote push."
+    "This review does not attest deployment, integration with existing projects or remote push."
   ],
   "reviewed_file_sha256": {
     "src/codinator/integration.py": "471bbe0cfd339ea1f7c8602a6d63b9beee7e6dee00aa1a0334d9869e41ca30f8",

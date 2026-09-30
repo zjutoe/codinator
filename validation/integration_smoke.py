@@ -1,6 +1,6 @@
 """Opt-in real Pi -> Codex -> Pi commit/merge in a new disposable repository.
 
-Never pushes or touches KMesh. Raw runtime/configuration stays outside this repo.
+Never pushes or changes existing workspaces. Raw runtime/configuration stays outside this repo.
 """
 import json
 import hashlib

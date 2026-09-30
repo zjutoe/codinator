@@ -1,4 +1,5 @@
 """Separate service/frontend processes with fake agents; no model connectivity claim."""
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -14,6 +15,7 @@ from unittest.mock import patch
 import test_engine
 from codinator.agents import worker as real_worker
 from codinator.files import Problem, digest, snapshot, write_json
+from codinator.process import process_start
 from codinator.store import Store
 
 
@@ -137,8 +139,8 @@ class BackgroundInterfaceTests(unittest.TestCase):
         self.assertEqual(task['state'], 'accepted')
         self.assertIsNone(task['control'])
 
-    def test_service_reworks_after_frontend_exits_and_queries_do_not_pause(self):
-        gate = self.base / 'gate'
+    @contextmanager
+    def service(self, gate):
         env = os.environ | {'FAKE_MODE': 'gated-rework', 'FAKE_GATE': str(gate),
                             'PYTHONPATH': os.pathsep.join((str(Path(__file__).resolve().parents[1] / 'src'),
                                                         str(Path(__file__).resolve().parent))),
@@ -148,40 +150,87 @@ class BackgroundInterfaceTests(unittest.TestCase):
                 'from codinator.cli import main; import sys\n'
                 'with patch("codinator.engine.Sandbox", FakeSandbox):\n'
                 '    sys.exit(main(sys.argv[1:]))\n')
-        with (self.base / 'service.log').open('wb') as log:
+        with (self.base / 'service.log').open('ab') as log:
             service = subprocess.Popen([sys.executable, '-B', '-c', code, '--state-dir', str(self.store.root),
                                         '--pi-bin', self.agent, '--codex-bin', self.agent, 'serve'],
                                        env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
                                        start_new_session=True)
             try:
-                deadline = time.monotonic() + 25
-                while self.store.get('test')['state'] != 'implementing':
-                    self.assertIsNone(service.poll(), (self.base / 'service.log').read_text())
-                    self.assertLess(time.monotonic(), deadline)
-                    time.sleep(.05)
-                # Short-lived CLI calls represent a frontend which closes after each read.
-                events_before = self.store.db.execute('SELECT COALESCE(MAX(seq), 0) FROM events').fetchone()[0]
-                for _ in range(2):
-                    frontend = subprocess.run([sys.executable, '-B', '-m', 'codinator', '--state-dir',
-                                               str(self.store.root), 'status', 'test'], env=env,
-                                              capture_output=True, text=True, timeout=5)
-                    self.assertEqual(frontend.returncode, 0, frontend.stderr)
-                    self.assertEqual(json.loads(frontend.stdout)[0]['state'], 'implementing')
-                self.assertIsNone(self.store.get('test')['control'])
-                # Ignore the independent process-start event while the service enters Pi.
-                new_events = list(self.store.db.execute('SELECT payload FROM events WHERE seq > ?', (events_before,)))
-                self.assertTrue(all(json.loads(row[0]).keys() <= {'pid', 'pid_start', 'updated'} for row in new_events))
-                gate.touch()
-                while self.store.get('test')['state'] != 'accepted':
-                    self.assertIsNone(service.poll(), (self.base / 'service.log').read_text())
-                    self.assertNotIn(self.store.get('test')['state'], ('paused', 'blocked'))
-                    self.assertLess(time.monotonic(), deadline)
-                    time.sleep(.05)
-                task = self.store.get('test')
-                self.assertEqual((task['round'], task['attempt']), (2, 2))
-                self.assertTrue((self.store.root / 'tasks/test/attempt-0001/outcome.json').exists())
-                self.assertTrue((self.store.root / 'tasks/test/attempt-0002/outcome.json').exists())
-                self.assertIsNone(task['manifest'].get('notify_thread'))
+                yield service, env
             finally:
-                service.terminate()
+                if service.poll() is None:
+                    service.terminate()
                 service.wait(timeout=10)
+
+    def test_service_reworks_after_frontend_exits_and_queries_do_not_pause(self):
+        gate = self.base / 'gate'
+        with self.service(gate) as (service, env):
+            deadline = time.monotonic() + 25
+            while self.store.get('test')['state'] != 'implementing':
+                self.assertIsNone(service.poll(), (self.base / 'service.log').read_text())
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(.05)
+            # Short-lived CLI calls represent a frontend which closes after each read.
+            events_before = self.store.db.execute('SELECT COALESCE(MAX(seq), 0) FROM events').fetchone()[0]
+            for _ in range(2):
+                frontend = subprocess.run([sys.executable, '-B', '-m', 'codinator', '--state-dir',
+                                           str(self.store.root), 'status', 'test'], env=env,
+                                          capture_output=True, text=True, timeout=5)
+                self.assertEqual(frontend.returncode, 0, frontend.stderr)
+                self.assertEqual(json.loads(frontend.stdout)[0]['state'], 'implementing')
+            self.assertIsNone(self.store.get('test')['control'])
+            # Ignore the independent process-start event while the service enters Pi.
+            new_events = list(self.store.db.execute('SELECT payload FROM events WHERE seq > ?', (events_before,)))
+            self.assertTrue(all(json.loads(row[0]).keys() <= {'pid', 'pid_start', 'updated'} for row in new_events))
+            gate.touch()
+            while self.store.get('test')['state'] != 'accepted':
+                self.assertIsNone(service.poll(), (self.base / 'service.log').read_text())
+                self.assertNotIn(self.store.get('test')['state'], ('paused', 'blocked'))
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(.05)
+            task = self.store.get('test')
+            self.assertEqual((task['round'], task['attempt']), (2, 2))
+            self.assertTrue((self.store.root / 'tasks/test/attempt-0001/outcome.json').exists())
+            self.assertTrue((self.store.root / 'tasks/test/attempt-0002/outcome.json').exists())
+            self.assertIsNone(task['manifest'].get('notify_thread'))
+
+    def test_service_restart_requires_explicit_resume_and_preserves_attempt(self):
+        gate = self.base / 'gate'
+        attempt = self.store.root / 'tasks/test/attempt-0001'
+        events = attempt / 'pi/stdout.jsonl'
+        with self.service(gate) as (service, env):
+            deadline = time.monotonic() + 15
+            # Interrupt after prompt acknowledgement, when replay would be uncertain.
+            while not events.exists() or '"id": "prompt"' not in events.read_text():
+                self.assertIsNone(service.poll(), (self.base / 'service.log').read_text())
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(.05)
+            task = self.store.get('test')
+            pid, start = task['pid'], task['pid_start']
+            service.terminate()
+            self.assertEqual(service.wait(timeout=10), 130)
+        self.assertNotEqual(process_start(pid), start)
+        task = self.store.get('test')
+        self.assertEqual((task['state'], task['attempt'], task['pid']), ('paused', 1, None))
+        original = {p.relative_to(attempt): p.read_bytes() for p in attempt.rglob('*') if p.is_file()}
+        self.assertIn('KeyboardInterrupt', json.loads(original[Path('pi/result.json')])['failure'])
+        gate.touch()
+        with self.service(gate) as (service, env):
+            # Let the restarted service complete a polling interval without a resume.
+            time.sleep(3.5)
+            self.assertIsNone(service.poll(), (self.base / 'service.log').read_text())
+            task = self.store.get('test')
+            self.assertEqual((task['state'], task['attempt']), ('paused', 1))
+            self.assertFalse((attempt.parent / 'attempt-0002').exists())
+            frontend = subprocess.run([sys.executable, '-B', '-m', 'codinator', '--state-dir',
+                                       str(self.store.root), 'resume', 'test'], env=env,
+                                      capture_output=True, text=True, timeout=5)
+            self.assertEqual(frontend.returncode, 0, frontend.stderr)
+            deadline = time.monotonic() + 20
+            while self.store.get('test')['state'] != 'accepted':
+                self.assertIsNone(service.poll(), (self.base / 'service.log').read_text())
+                self.assertNotIn(self.store.get('test')['state'], ('paused', 'blocked'))
+                self.assertLess(time.monotonic(), deadline)
+                time.sleep(.05)
+            self.assertEqual(self.store.get('test')['attempt'], 2)
+        self.assertEqual({p.relative_to(attempt): p.read_bytes() for p in attempt.rglob('*') if p.is_file()}, original)

@@ -94,7 +94,7 @@
   },
   "limits": [
     "Original attempt did not record proxy environment, so absent/misconfigured proxy versus transient failure is not established.",
-    "This is one successful tiny real-model end-to-end task, not KMesh integration or a reliability benchmark.",
+    "This is one successful tiny real-model end-to-end task, not validation of an existing project or a reliability benchmark.",
     "No real thread notification was requested/tested; no source changes, commit or push in this recovery."
   ]
 }

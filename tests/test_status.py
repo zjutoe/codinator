@@ -27,7 +27,7 @@ class StatusTests(unittest.TestCase):
         result = self.status()
         self.assertEqual(result['state'], 'paused')
         self.assertEqual(result['reason'], 'transport result uncertain')
-        self.assertEqual(result['mode'], 'background')
+        self.assertNotIn('mode', result)
         self.assertEqual(result['evidence'], str(self.store.root / 'tasks/test'))
         self.assertEqual(result['next_action'], 'inspect_evidence_before_explicit_resume')
         self.assertEqual(list(self.store.db.iterdump()), before)
@@ -51,16 +51,6 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(result['state'], 'blocked')
         self.assertEqual(result['latest_review']['verdict'], 'accepted')
         self.assertEqual(result['next_action'], 'inspect_evidence_before_explicit_resume')
-
-    def test_native_pi_status_uses_separate_root_without_opening_session(self):
-        state = self.base / 'other'
-        with contextlib.closing(Store(state / 'interactive').db) as db:
-            self.store.db.backup(db)
-        with patch('codinator.foreground.launch', side_effect=AssertionError('must not start Pi')):
-            result = self.status('--mode', 'pi', root=state)
-        self.assertEqual(result['mode'], 'pi')
-        self.assertEqual(result['evidence'], str(state / 'interactive/tasks/test'))
-        self.assertFalse((state / 'state.sqlite').exists())
 
     def test_missing_database_does_not_create_state(self):
         root = self.base / 'missing'

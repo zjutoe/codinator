@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "codinator"
 version = "0.1.0"
-description = "Durable Pi implementation and Codex review loops"
+description = "Codex task interface with durable background implementation and review"
 requires-python = ">=3.11"
 dependencies = []
 
@@ -14,6 +14,3 @@ codinator = "codinator.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[tool.setuptools.package-data]
-codinator = ["pi_extension.mjs"]

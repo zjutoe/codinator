@@ -37,22 +37,16 @@ def notifications(store, codex_bin):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description='Codinator: Pi implementation and independent Codex acceptance')
+    parser = argparse.ArgumentParser(description='Codinator: task control for the Codex interface and background service')
     parser.add_argument('--state-dir', default=os.environ.get('CODINATOR_STATE_DIR', '~/.local/state/codinator'))
     parser.add_argument('--pi-bin', default='pi')
     parser.add_argument('--codex-bin', default='codex')
     sub = parser.add_subparsers(dest='command', required=True)
     p = sub.add_parser('submit', help='Publish an explicit immutable manifest')
     p.add_argument('manifest')
-    p = sub.add_parser('pi', help='Native Pi interface with automatic independent Codex review/rework')
-    p.add_argument('target', help='Manifest path for a new task, or existing interactive task ID')
-    p.add_argument('--resume', action='store_true', help='Explicitly resume a paused interactive task')
-    for name in ('run', 'status', 'pause', 'cancel', 'resume'):
+    for name in ('status', 'pause', 'cancel', 'resume'):
         p = sub.add_parser(name)
         p.add_argument('task', nargs='?' if name == 'status' else None)
-        if name == 'status':
-            p.add_argument('--mode', choices=('background', 'pi'), default='background',
-                           help='Read background tasks or the separate native Pi state; never starts a session')
         if name == 'resume':
             p.add_argument('--extra-seconds', type=int, default=0)
             p.add_argument('--attempt-seconds', type=int, help='Override each Pi/Codex process timeout for this task; original manifest remains unchanged')
@@ -64,9 +58,6 @@ def main(argv=None):
     sub.add_parser('service', help='Print a user service unit; does not install/enable it')
     args = parser.parse_args(argv)
     try:
-        if args.command == 'pi':
-            from .foreground import launch
-            return launch(args.state_dir, args.target, resume=args.resume, pi_bin=args.pi_bin, codex_bin=args.codex_bin)
         if args.command == 'service':
             exe = shutil.which('codinator') or str(Path(sys.executable).parent / 'codinator')
             state = str(Path(args.state_dir).expanduser().resolve())
@@ -86,14 +77,12 @@ def main(argv=None):
             return 0
         if args.command == 'status':
             state = Path(args.state_dir).expanduser()
-            if args.mode == 'pi':
-                state /= 'interactive'
             store = Store(state, read_only=True)
             try:
                 with store.db:
                     store.db.execute('BEGIN')
                     tasks = [store.get(args.task)] if args.task else store.tasks()
-                    print(json.dumps([report(store, t, args.mode) for t in tasks], ensure_ascii=False, indent=2))
+                    print(json.dumps([report(store, t) for t in tasks], ensure_ascii=False, indent=2))
             finally:
                 store.db.close()
             return 0
@@ -128,12 +117,6 @@ def main(argv=None):
         elif args.command == 'recover':
             with lock(store.root / 'controller.lock'):
                 engine.recover()
-        elif args.command == 'run':
-            engine.run(args.task)
-            notifications(store, args.codex_bin)
-            task = store.get(args.task)
-            print(json.dumps({k: task[k] for k in ('id', 'state', 'reason')}, ensure_ascii=False, indent=2))
-            return 0 if task['state'] == 'accepted' else 1
         elif args.command == 'serve':
             def interrupted(signum, frame):
                 raise KeyboardInterrupt

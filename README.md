@@ -1,160 +1,60 @@
 # Codinator
 
-让 Codex 制订任务、Pi + Bonsai 实施、Codex 独立验收，并自动安排返工。
-你发布一份明确的任务契约，程序负责派发、留证、冻结、验收和通知。
+以 **Codex 为唯一交互界面**：在 Codex 主会话中讨论需求、发布任务、查询状态和处理异常；
+独立后台服务负责 Pi + Bonsai 实施、必需检查、Codex 独立验收与自动返工。
+关闭主界面不会暂停后台任务，只有独立验收结论可以接受工作。
 
-首版面向 Linux、单用户、串行任务；Python 3.11+，Python 运行时无第三方依赖。
-需要已安装并完成认证的 `pi`、`codex`、`git`、`bwrap`。
+面向 Linux、单用户、串行任务。需要 Python 3.11+，以及已安装并完成认证的
+`pi`、`codex`、`git`、`bwrap`；Python 运行时无第三方依赖。
+Pi 通过 RPC 执行实施任务，Codex 通过独立审查进程验收，均由控制器调度。
 
-2026-09-28 统一项目名称为 **Codinator**：Python 包、发行包和命令均为 `codinator`，
-环境变量使用 `CODINATOR_` 前缀，默认状态目录为 `~/.local/state/codinator`。
-升级现有安装前停止旧控制器和服务，卸载原发行包，再按下文安装；不要让两个版本同时操作同一工作区。
-已有任务继续通过 `--state-dir` 指向原状态目录，不搬迁或重写原 manifest、会话和证据。
-服务 unit 须重新生成，环境变量及外部调用脚本须同步改名；安装本身不启用服务或自动派发任务。
-
-## 推荐：Codex 主界面，后台自动实施与审查
-
-在原生 Codex 中讨论与管理任务，通过 CLI 发布、查询和显式恢复；由独立的
-Codinator user service 运行 Pi + Bonsai、必需检查、独立 Codex 审查及自动返工。
-服务运行后，阅读状态、与 Codex 对话或关闭主界面都不会暂停后台任务。
-
-任务 manifest 可显式授权验收后的 Pi commit/merge 阶段：独立 Codex 接受后，
-Pi + Bonsai 在隔离 Git 副本中提交并快进合并，控制器核对完整提交树后将同一提交
-快进到指定主工作树。启用后，任务只有合并完成才成为终态 `accepted`；不自动 push。
-配置和恢复边界见 [验收后集成](docs/codex-interface.md#验收后由-pi-提交并合并)。
+## 安装与服务
 
 ```bash
-# 一次性生成并启用服务；先检查已有配置和任务。需要代理时在生成命令上设置。
-mkdir -p ~/.config/systemd/user
-codinator service > ~/.config/systemd/user/codinator.service
-systemctl --user daemon-reload
-systemctl --user enable --now codinator.service
-
-# 新任务准备好独立工作树与明确契约后发布
-codinator submit /absolute/path/to/task.json
-codinator status TASK_ID
-```
-
-`status` 是只读查询，显示当前阶段、暂停原因、轮次、attempt、证据路径和带 attempt 标识的
-最近审查，避免把旧审查当成当前轮次结果。`codinator status TASK_ID --mode pi` 可直接查询
-原生 Pi 的现有任务，无需启动 Pi。新安装尚无任务库时会明确报错，不静默创建空状态。
-
-服务负责确定性的执行闭环；主 Codex 会话负责设计与异常解释，正式验收仍由独立进程执行。
-不需要 Codex App Server、额外 MCP 或前台持续轮询。`run` 保留为前台诊断命令；日常使用
-已经启用的 `serve`，不要同时再运行 `run`。配置 `notify_thread` 是可选的，不影响自动返工。
-
-操作、状态字段、故障恢复及两种模式的边界见 [Codex 主界面协议](docs/codex-interface.md)。
-原生 Pi 可在发布前选择用于直接观察和干预实施；本版不支持后台任务中途 attach 或模式迁移。
-
-## 可选：原生 Pi 直接交互
-
-在交互终端启动一份明确的任务 manifest：
-
-```bash
-cd ~/src/llm/codinator
-env http_proxy=http://127.0.0.1:8888 https_proxy=http://127.0.0.1:8888 \
-    .venv/bin/codinator pi /absolute/path/to/task.json
-```
-
-终端中显示原生 Pi CLI 和 Bonsai 的实时输出。任务实施 → 自检 → 提交 Markdown 总结 →
-后台检查和独立 Codex 审查 → 自动返工 → 再提交，直到接受，正常轮次无需用户确认。
-Pi 固定使用 `bonsai/bonsai2-27b/xhigh` 并直连本机；Codex 固定使用 `gpt-6-astra/xhigh`
-并继承上面为控制器设置的 proxy。不会改全局代理设置。
-
-Pi 完成后调用扩展提供的 `codex_submit_review` 工具，程序负责生成 `submission.md`。
-Codex 的正式意见保存在 `review.md` 并显示在 Pi 中；中间模型输出保存在仓外原始记录中。
-这些文件位于 `~/.local/state/codinator/interactive/tasks/TASK_ID/attempt-NNNN/`，
-每轮使用新目录，历史保留。Pi 原生会话位于同一 state 根下的 `private/TASK_ID/`。
-
-常用命令直接输入 Pi：
-
-- `/codex-status`：显示阶段、轮次和证据目录。
-- `/codex-pause`：停止自动循环并中断当前实施或审查。
-- `/codex-resume`：明确恢复。冻结提交已完成检查时，只恢复 Codex 审查。
-
-按 Esc 中止当前模型回合、输入新消息介入、切换会话或退出 Pi，都停止自动续轮。
-退出后重新打开使用：
-
-```bash
-env http_proxy=http://127.0.0.1:8888 https_proxy=http://127.0.0.1:8888 \
-    .venv/bin/codinator pi TASK_ID --resume
-```
-
-可省略 `--resume` 先查看现场，再在 Pi 中决定恢复。不会因重启而重放不确定的旧提示。
-默认最多四轮；`needs_changes` 在剩余轮次内自动交回 Pi，即使问题编号与上一轮相同。
-稳定编号用于追踪同一问题，不能据此判断修复没有进展。轮数耗尽、额度/连接故障、范围或冻结快照变化等情况会停止并说明原因。
-正常返工不需逐轮确认，但程序不承诺无限重试或任何任务一定被接受。原生 Pi 模式不支持 manifest 的验收后集成配置，发布时会拒绝；既有原生任务不自动 commit/push/merge。
-
-旧版因 `Two consecutive reviews retain the same issue set` 停在 `blocked / feedback` 的交互任务，
-更新后退出旧控制器，再用 `codinator pi TASK_ID --resume`（或新会话内 `/codex-resume`）明确恢复。
-控制器核对冻结快照、检查证据和最近返工结论，在原 `max_rounds` 内进入下一轮；保留全部旧 attempt，
-重新提交时才创建新 attempt，不重跑旧审查。此恢复不解除其他阻塞、不增加预算，也不修改契约。
-
-原生 Pi 的提交工具先返回“请求已排队”，这不是正式接收回执。冻结前的范围校验若明确拒收，
-控制器会保存拒收现场，并将具体问题交回 Pi 一次；重复拒收会暂停。超时、断连或接收结果不确定
-时仍暂停，不自动重放。暂停原因保存在 SQLite 和 Pi 会话中，退出会话不会覆盖已有原因。
-
-Python 缓存优先写入仓外的私有 Pi 配置目录；`-I` 会忽略环境变量，因此子进程仍应显式使用 `-B`。
-提交及显式恢复实施前，控制器可先留证再清理白名单外的新字节码缓存：仅限新建、非链接的
-`__pycache__/模块.版本标签[.opt-1或2].pyc`，对应源码存在，标签与 magic 匹配控制器 Python。
-已有缓存、其他版本、符号链接、硬链接和任意其他越界文件继续拒收；`.gitignore` 不扩大允许范围。
-清理前保存完整快照及内容，实际缓存移动到仓外 `cache-cleanup-*/removed/`，原 attempt 不改写。
-移动要求工作树和证据目录在同一文件系统；归档失败、并发变化或跨盘移动失败时保留现场并停止，
-不会回退到删除文件。冻结的检查／审查阶段不执行缓存清理。详见 [验证记录](validation/submission-recovery-20260928/README.md)。
-
-交互模式不会把用户阅读/讨论时间算作任务总墙钟，manifest 的 `max_seconds` 在此模式不适用；
-`attempt_seconds` 限制单次 Codex 审查（默认 7200 秒），各检查保留自己的超时。
-Pi 模型执行受其客户端设置和主动中断控制。新入口与旧 `run/serve` 使用独立状态，
-共享工作目录互斥锁；不要把正在旧流程执行的同一任务直接迁移进来。
-详见 [Pi 主界面协议](docs/pi-interface.md)。
-
-## 快速开始
-
-```bash
-cd ~/src/llm/codinator
 python3 -m venv --system-site-packages .venv
 .venv/bin/python -m pip install --no-index --no-build-isolation --no-deps -e .
 .venv/bin/codinator doctor
+
+mkdir -p ~/.config/systemd/user
+.venv/bin/codinator service > ~/.config/systemd/user/codinator.service
+systemctl --user daemon-reload
+systemctl --user enable --now codinator.service
+systemctl --user is-active codinator.service
 ```
 
-复制 [examples/task.json](examples/task.json)，将 workspace、handoff、允许路径和检查命令改为真实值。
-可用 [示例交接文档](examples/demo-handoff.md) 在空的独立仓库里先试跑。
-workspace 必须是独立 Git 仓库／worktree 的根目录；可以有未提交改动，发布时会整体留存。
-不要把正在人工编辑的工作树直接投入自动运行。
-
-```bash
-# 按上文启用独立服务后
-.venv/bin/codinator submit /absolute/path/to/task.json
-.venv/bin/codinator status demo-add
-```
-
-`submit` 是明确派发授权：程序不会扫描项目里所有 `ready` 文档自行开工。
-`run` 在当前终端执行完整闭环；`serve` 在后台串行处理已发布任务。
-后台服务已启用时，`submit` 后直接用 `status` 查看结果，不再并行执行 `run`。
-
-**前台运行的代理：** `run`／`serve` 继承当前终端环境；它们不会读取 systemd unit 保存的代理变量。
-本机 Codex 需要代理时，前台命令也必须带上代理。以下为本机 `127.0.0.1:8888` 的示例，
-其他机器替换为自己的地址；仅影响这一条命令，Pi 子进程仍移除代理并直连 Bonsai：
+`doctor` 只检查本地依赖和沙箱，不调用模型。`service` 只输出 unit；生成时保存 PATH 和代理环境。
+已有安装应先核对运行任务与配置，在服务空闲时更新和重启。
+需要代理时，在生成 unit 的命令上设置，例如：
 
 ```bash
 env http_proxy=http://127.0.0.1:8888 https_proxy=http://127.0.0.1:8888 \
-    HTTP_PROXY=http://127.0.0.1:8888 HTTPS_PROXY=http://127.0.0.1:8888 \
-    NO_PROXY=localhost,127.0.0.1,::1 no_proxy=localhost,127.0.0.1,::1 \
-    .venv/bin/codinator run demo-add
+    .venv/bin/codinator service > ~/.config/systemd/user/codinator.service
 ```
 
-遇到 `Process exceeded wall-clock budget`，先查看最新 attempt 中 `pi/result.json`、
-`checks/*/result.json`、`codex/result.json` 来定位阶段。若 Codex 日志反复出现连接失败，
-先恢复代理／网络；延长墙钟预算不会修复连接。恢复使用新 attempt，旧证据保留。
+地址按本机环境调整。Pi + Bonsai 子进程移除代理并直连本机服务；Codex 审查与通知保留服务代理。
+全局代理和客户端配置不会被修改。实施固定为 `bonsai / bonsai2-27b / xhigh`，
+验收固定为 `gpt-6-astra / xhigh`。Pi 实际客户端身份由 RPC 校验和记录，不以模型自述作证。
 
-实施固定为 `bonsai / bonsai2-27b / xhigh`，验收固定为 `gpt-6-astra / xhigh`。
-实际 Pi 客户端身份通过 RPC 校验并记录，不把模型自述当作证据。
-Pi + Bonsai 直连本机服务，子进程会移除代理变量并设置 `NO_PROXY=*`；
-Codex 审计与通知保留启动控制器时的代理环境。不会修改你的全局代理或 Pi 配置。
-控制器只串行调度自己的任务，不管理其他 Pi 客户端。Bonsai 只有一个推理槽时，
-并行使用手工会话可能产生排队和上下文缓存竞争；联调宜安排在服务空闲时。
+## 在 Codex 中管理任务
 
-## 工作流
+复制 [examples/task.json](examples/task.json)，将工作树、交接文档、允许路径和检查命令改为真实值。
+可用 [示例交接文档](examples/demo-handoff.md) 在空的独立仓库中准备任务。
+workspace 必须是独立 Git 仓库或 worktree 的根目录；发布时保存包括未提交改动在内的基线。
+
+```bash
+.venv/bin/codinator submit /absolute/path/to/task.json
+.venv/bin/codinator status TASK_ID
+.venv/bin/codinator pause TASK_ID
+.venv/bin/codinator resume TASK_ID
+.venv/bin/codinator cancel TASK_ID
+```
+
+`submit` 是明确派发授权，服务仅处理已发布任务。`status` 只读，显示状态、原因、轮次、
+attempt、证据位置和带 attempt 标识的最近审查；它不会恢复任务或启动模型。
+`serve` 是供独立用户服务使用的控制器入口。日常由主 Codex 会话调用上述管理命令。
+操作与故障处理见 [Codex 主界面协议](docs/codex-interface.md)。
+
+## 执行与恢复
 
 ```text
 ready → implementing → checking → reviewing → accepted
@@ -162,67 +62,47 @@ ready → implementing → checking → reviewing → accepted
              └──── needs_changes ────┘
 ```
 
-必需检查失败会附带原始结果进入返工；检查通过后才启动 Codex 审查。
-Codex 根据原契约、真实代码、测试质量、快照和执行记录决定通过、返工或阻塞。
-默认最多四轮实施（首轮加三次返工），总墙钟四小时；单个Pi或Codex进程默认上限7200秒（两小时）。
-两个阶段、检查和返工共享总墙钟；单次上限不是保证可用时长。相同 issue ID 仍在剩余轮次内返工。
-传输失败、输出截断、缺少交付、越界改动和不可信验收结果进入 `blocked`，不会误报通过。
-Pi 自身可按其重试策略处理瞬时服务错误；调度器不盲目重发可能已经执行过的 prompt。
+必需检查失败或独立审查要求修改时，控制器在剩余轮次内自动安排 Pi 返工。
+默认最多四轮实施，总墙钟四小时，单次 Pi 或 Codex 进程上限两小时；
+实施、检查、审查与返工共享总时间，暂停时间也计入总墙钟。相同 issue ID 不提前终止返工。
+连接故障、输出截断、缺少交付、越界改动和不可信验收结果会阻塞任务；不重放不确定提示。
+
+普通 `resume` 创建新的实施 attempt，旧证据保留。Pi 已完整交付、检查通过，
+仅 Codex 审查因额度、连接或进程中断而未完成时，可以显式只恢复审查：
 
 ```bash
-.venv/bin/codinator pause demo-add
-.venv/bin/codinator resume demo-add
-.venv/bin/codinator status demo-add
-# 墙钟预算含暂停时间；需要延长时显式授权：
-.venv/bin/codinator resume demo-add --extra-seconds 3600
-.venv/bin/codinator cancel demo-add
+codinator resume TASK_ID --review-only
+# 确需调整预算时显式指定：
+codinator resume TASK_ID --review-only --attempt-seconds 7200 --extra-seconds 3600
 ```
 
-普通 `resume` 会创建新 attempt，从 Pi 开始重新走完整流程；旧记录不覆盖。
+仅审查恢复会核对原交付、检查证据与冻结快照，创建新审查 attempt，不增加实施轮次。
+缺失或损坏证据、工作树变化、检查失败、未完成实施，以及已有但尚未接收的 verdict，都会拒绝该操作。
+若新审查要求返工，服务继续安排下一轮实施与检查。
 
-旧任务保留发布时的显式预算，不随新版默认值变化。对已阻塞／暂停任务，可明确覆盖之后每个Pi／Codex进程的上限：
+`--attempt-seconds` 覆盖之后单个模型进程的上限；`--extra-seconds` 延长总截止时间，
+若已过期则从恢复时计算新增时间。省略参数保留原预算；检查自己的超时不变。
+变更原子记录到 SQLite 事件，新 attempt 的 `budget.json` 保存生效预算，原 manifest 和旧证据不改写。
 
-```bash
-.venv/bin/codinator resume TASK_ID --attempt-seconds 7200 --extra-seconds 14400
-```
+服务启动时自动检查中断现场；手工执行 `recover` 也只做恢复核对，不派发任务。
+检查原因与证据后才能显式 `resume`。工作树偏离已记录快照时，需要人工核对并恢复，或发布新任务；
+控制器不会自动 reset、stash 或回滚。延长超时不能修复代理、额度或连接问题。
 
-这给本任务设置7200秒单次上限，并延长总截止时间14400秒；若旧截止时间已过，则从恢复时起给四小时。
-两个阶段及检查仍共享总时间，检查自己的超时上限不变。只想改单次上限且总时间仍够时可省略 `--extra-seconds`。
-该覆盖值可与 `--review-only` 合用；省略 `--attempt-seconds` 保留此前覆盖，不能绕过仅审计恢复的资格检查。
-预算变更随恢复状态原子记入SQLite事件，新attempt的 `budget.json` 保存生效来源、原发布值和总截止时间；
-原manifest、工作树交接和旧attempt原件不改写。`status` 显示当前生效的单次上限。
-升级后先重启空闲后台服务再恢复任务，避免旧服务仍按发布值运行。
+manifest 可通过 `integration` 显式授权验收后的 Pi 提交和快进合并。
+控制器核对接受快照与完整提交树，推广同一个提交，合并完成后才进入 `accepted`；不自动 push。
+未配置时，任务在验收接受后结束。授权和恢复规则见 [验收后集成](docs/codex-interface.md#验收后由-pi-提交并合并)。
 
-若 Pi 已完整交付、所有必需检查通过，仅 Codex 因额度／连接／进程中断而未完成审计，可显式只恢复审计：
+## 升级边界
 
-```bash
-.venv/bin/codinator resume TASK_ID --review-only --extra-seconds 3600
-.venv/bin/codinator status TASK_ID
-```
-
-这里额外授权3600秒墙钟预算；仍有足够余额时可省略 `--extra-seconds`。后台服务启用时恢复命令即入队，
-不要同时再执行 `run`；前台模式则按上面的代理示例运行 `run TASK_ID`。
-
-`--review-only` 进入独立的 `review_ready` 状态：核对未变的提交、Pi 成功协议／交付、原检查命令及输出哈希，
-只创建新的 Codex 审计 attempt。不会启动 Pi 或重跑已通过的检查，实施轮次不增加。新 `review-source.json`
-引用原实施证据，原始日志保留；运行前后都核对冻结提交与证据。再次遇到基础设施中断仍暂停，须显式恢复。
-若新审计要求返工，则自动进入下一实施轮，重新运行 Pi 与必需检查。
-
-缺少／损坏证据、工作区改变、检查失败、未完成的 Pi，均不能只恢复审计。已有 verdict 或 outcome 的任务
-需要先检查结论，不能用此选项绕过返工／阻塞意见；这是保守限制，也包括 verdict 已落盘而控制器尚未接收的崩溃。
-旧数据库自动迁移，符合条件的旧任务可恢复；部署此版本后先重启空闲后台服务。
-旧服务不会识别 `review_ready`，因此不会误将它交给 Pi，但也不会处理该队列，需重启加载新代码。
-
-控制器崩溃后先 `recover` 并检查状态，再显式选择普通或仅审计 `resume`。
-若工作树偏离已记录快照，应人工检查并恢复，或发布新任务；不会自动 reset、stash 或回滚。
-任务通过后停在 accepted，不自动 commit、push、合并或开始下一项研究设计。
+本版移除原生 Pi 终端界面、前台 `run` 命令及单独的 Codex 探针；状态查询不再提供 `--mode`，
+结果也不再包含 `mode` 字段。所有操作统一使用后台任务的状态根目录。
+旧 `interactive/` 目录、任务契约和 attempt 证据保留在仓外，不自动迁移或重新派发。
+升级前结束旧界面会话并检查遗留任务，勿将其目录直接交给后台服务，或重复发布仍在执行的工作树。
 
 ## 任务契约
 
 `handoff` 是只读契约，不允许出现在 `allowed_paths` 内。执行者写独立的本轮汇总，
 SQLite 是状态的唯一来源；本版不自动改写项目 README／交接文档中的状态。
-接入已有 KMesh 任务前，应由 Codex 修订旧的“Pi 修改状态和报告路径”约定及范围检查器；
-不能让 Pi 绕过旧冻结清单。Codinator 本身不修改 KMesh。
 
 - `allowed_paths`：精确文件，或以 `/` 结尾的目录；不支持通配符，不允许 `.git`／`.codex`／`.agents`。
 - `checks[].argv`：参数数组，直接启动进程，不经过隐式 shell。检查在只读工作树中运行；临时产物写 `/tmp`。
@@ -276,16 +156,7 @@ Codex 也有外层进程隔离，工作树只读，CLI 内层显式 `--sandbox r
 
 ## 后台服务与通知
 
-```bash
-mkdir -p ~/.config/systemd/user
-.venv/bin/codinator service > ~/.config/systemd/user/codinator.service
-systemctl --user daemon-reload
-systemctl --user enable --now codinator.service
-systemctl --user status codinator.service
-journalctl --user -u codinator.service
-```
-
-服务只执行明确发布到默认状态目录的任务。不同状态目录需生成对应 service 参数。
+服务只执行明确发布到所配置状态目录的任务。不同状态目录需生成对应 service 参数。
 生成的 unit 保存当时的 PATH 和代理环境，确保后台 Codex 仍经代理；Pi 的直连规则不变。
 注销后继续运行取决于本机 user service／linger 设置；程序不修改系统级策略。
 
@@ -303,8 +174,5 @@ PYTHONPATH=src python3 -m unittest discover -s tests -v
 测试使用明确标识的假 agent 子进程，不调用模型；覆盖返工、恢复、截断、错误退出、
 并发修改、范围越界、通知重试、身份校验、证据发布及后台子进程清理。
 真实模型／沙箱联调证据另列于 `validation/`，不能用模拟测试代替。
-本机首次安装的验证结果与待续事项见 [验证记录](validation/README.md)。
+验证方法与历史证据说明见 [验证记录](validation/README.md)。
 项目的后续运行中，完整 state 目录可包含认证和原始工具输出，分享前只选所需脱敏证据。
-
-接口依据：[Pi RPC](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc.md)、
-[Codex 非交互执行](https://learn.chatgpt.com/docs/non-interactive-mode)。当前适配 Pi 0.86.1、Codex 0.154.0；升级后应复跑协议与真实联调。

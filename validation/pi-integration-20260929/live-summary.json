@@ -1,5 +1,5 @@
 {
-  "kind": "real Pi -> Codex -> Pi commit/merge; isolated fixture, no KMesh changes",
+  "kind": "real Pi -> Codex -> Pi commit/merge; isolated fixture, no changes to existing workspaces",
   "root": "/home/mye/data/codinator-integration-live-cqmy81xf",
   "state": "accepted",
   "merged_commit": "d8f4d08bf847d1480a054665af854ab5ccc497f2",

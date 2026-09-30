@@ -1,5 +1,7 @@
 # Codinator working agreements
 
+- Codex is the only user interface. Task commands manage the background service; Pi implementation and independent Codex review are controller-owned stages.
+
 - Preserve task contracts and immutable attempt evidence. Never replay an uncertain prompt.
 - Only the controller writes workflow state. Only an independent Codex verdict can accept work.
 - Do not commit/merge without an explicitly authorized integration manifest; never push or expand a submitted allowlist. Optional background integration runs Pi only after independent acceptance, verifies the exact accepted tree and promotes the same commit by fast-forward. Do not silently switch models.

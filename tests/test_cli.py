@@ -9,6 +9,17 @@ from codinator.cli import main
 
 
 class CliTests(unittest.TestCase):
+    def test_removed_entrypoints_fail_before_opening_state_or_starting_agents(self):
+        for argv in (['pi', 'task.json'], ['run', 'task'], ['codex', 'task'],
+                     ['status', 'task', '--mode', 'pi'], ['status', '--mode', 'background']):
+            with self.subTest(argv=argv), patch('codinator.cli.Store') as store, \
+                 patch('codinator.cli.Engine') as engine, contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as raised:
+                    main(argv)
+                self.assertEqual(raised.exception.code, 2)
+                store.assert_not_called()
+                engine.assert_not_called()
+
     def test_state_directory_selection(self):
         cases = (
             ({}, ['status'], '~/.local/state/codinator'),

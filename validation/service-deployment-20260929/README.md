@@ -1,5 +1,7 @@
 # 用户级服务部署与真实后台核验
 
+> 历史验证记录，仅对应当时版本；当前操作以 [项目说明](../../README.md) 为准。
+
 2026-09-29：codinator.service 已 enabled / active / running，由 systemd 用户管理器持有。
 真实任务 deploy-live-20260929T092520Z 为 accepted / round 1 / attempt 2。
 

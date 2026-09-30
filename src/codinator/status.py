@@ -5,12 +5,12 @@ from .files import Problem
 from .process import process_start
 
 
-def report(store, task, mode):
+def report(store, task):
     directory = store.root / 'tasks' / task['id']
     attempt = directory / f"attempt-{task['attempt']:04d}"
     keys = ('id', 'state', 'phase', 'round', 'attempt', 'reason', 'control', 'deadline')
     result = {key: task[key] for key in keys}
-    result.update(mode=mode, workspace=task['manifest']['workspace'], evidence=str(directory),
+    result.update(workspace=task['manifest']['workspace'], evidence=str(directory),
                   attempt_evidence=str(attempt) if task['attempt'] else None,
                   attempt_seconds=task['attempt_seconds_override'] or task['manifest']['attempt_seconds'],
                   process_alive=bool(task['pid'] and task['pid_start']
@@ -39,6 +39,5 @@ def report(store, task, mode):
     result['next_action'] = (
         'none' if task['state'] in ('accepted', 'cancelled') else
         'inspect_evidence_before_explicit_resume' if task['state'] in ('paused', 'blocked') else
-        'use_native_pi_session' if mode == 'pi' else
         'ensure_service_running_then_monitor')
     return result

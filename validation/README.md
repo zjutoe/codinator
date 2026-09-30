@@ -1,74 +1,46 @@
-# 验证记录（更新至2026-09-26）
+# 验证方法与历史记录
 
-## 2026-09-28 名称更正与历史原件
+当前仅保留 Codex 主界面管理后台服务的流程。模型执行、协议检查、冻结快照、验收和返工
+由控制器完成。使用方法见 [项目说明](../README.md) 和 [主界面协议](../docs/codex-interface.md)。
 
-本目录中的历史材料按用户要求统一了项目名称。发生文字替换的 JSON／日志现在是**名称规范化展示件**，
-不再视为当时输出的原始字节；原提交、原件 SHA-256 与展示件 SHA-256 见 [name-migration.json](name-migration.json)。
-原件完整保留在提交 `cfb0049a56b4e8a4499c3076dfa665f554d1f42c`，例如可用
-`git show cfb0049a56b4e8a4499c3076dfa665f554d1f42c:validation/tested-files.json` 读取。
-历史源码哈希仍描述当时版本，不是当前改名源码的验收哈希；未重算它们来冒充本轮验收。
-历史外部路径中的名称只作展示更正，对应目录未搬迁，实际定位以原件为准。
-下文的测试、服务和模型运行情况均为历史记录，不能据此推断当前环境或改名版本已经完成真实模型联调。
+## 当前验证方法
 
-## 本地测试与审查
+```bash
+PYTHONPATH=src python3 -B -m unittest discover -s tests -v
+python3 -B validation/native_sandbox.py
+```
 
-- 最终代码：`tests-r5.stderr`，38 项测试通过，45.315 秒，无跳过。
-  测试使用明确标识的假 agent 子进程；不把它们当作真实模型联调。
-- 较早轮次输出保留在 `tests-r2`～`tests-r4`；服务代理专项输出为 `service-proxy.stderr`。
-- `tested-files.json` 记录第 5 轮受测 Python 源码与测试的 SHA-256。
-- 提交前仅删除 7 个文件末尾的多余空行，Python 文件 AST 均未变。原测试记录和哈希
-  不回写；前后哈希见 [commit-hygiene.json](commit-hygiene.json)。
-- 独立非作者审查覆盖进程生命周期、状态与通知事务、快照、沙箱及协议终态。
-  发现的问题已修正并复审；审查者独立执行了针对性测试及真实 bubblewrap 探针。
-  审查调用原件在本次 Codex 会话中，本目录不伪造单独审查日志。
-- `native_sandbox.py` 已实际运行通过：允许路径可写、冻结文件/Git/证据只读、
-  `/tmp` 证据重挂可读、可写硬链接在启动前被拒。原始输出见本次会话工具记录。
+单元与流程测试使用明确标识的假 agent，不调用真实模型。覆盖自动返工、范围与证据校验、
+仅审查恢复、暂停／取消竞态、进程故障、服务重启及旧 attempt 保留。
+`native_sandbox.py` 只验证真实 bubblewrap 的文件权限边界，不调用模型。
+沙箱不可用时应明确报告失败，不改成无沙箱运行。
 
-## 真实模型联调
+`live_smoke.py` 和 `integration_smoke.py` 是需显式运行的完整控制器联调脚本，
+分别验证实施 → 检查 → 审查，以及验收后授权的提交与合并；在新临时仓库内执行。
+它们是开发验证工具，会实际调用模型并使用额度，不能用假 agent 结果代替其连通性证据。
+原单独调用审查模型的探针已移除。认证、私有配置、完整会话与任务运行数据均保存在仓外，
+分享时只导出所需脱敏摘要。
 
-真实运行目录在 `/home/mye/data/`，包含私有认证副本和原始工具输出，不进入代码仓库。
+## 历史材料的边界
 
-1. `codinator-live-2t64yxcz`：Pi 继承代理而连接失败，控制器正确标记 blocked。
-   随后按用户指示改为 Pi 直连本机，Codex 保留代理。
-2. `codinator-live-2h3hzypf`：Pi 已成功读取契约并调用工具，随后达到 420 秒阶段预算。
-   控制器停止进程并标记 blocked。同期服务唯一槽位处理约 18～20 万 token 请求；
-   排队/共享服务竞争是推断，不能仅据此认定其他请求的来源。
-3. `codinator-review-live-dmhasr5p`：独立 Codex 示例真实返回 accepted，进行了源码检查
-   和 1,000 次隔离调用。该示例由控制器构造，不是 Pi 交付，也不是完整闭环。
-   原适配器误把重连中的 error 诊断当最终失败；修复后要求 exit 0、turn.completed、
-   无 turn.failed 及有效且摘要匹配的结论。原始失败不改写，回归在最终 38 项中。
-   脱敏摘要见 [codex-live-summary.json](codex-live-summary.json)。
-4. `codinator-live-_fn0my19`：阶段预算 1,200 秒的完整闭环试跑。用户确认另有 Pi 长任务
-   使用同一 Bonsai，并要求等待它结束。本轮按用户指示暂停，实际状态为 paused，
-   原因为 `Pause/cancel requested`，未完成实现/验收。暂停后进程已收尾，记录保留。
-   实施模型继续使用 `bonsai2-27b`。脱敏记录见 [live-pause-summary.json](live-pause-summary.json)。
+本目录中的日期子目录、JSON 摘要及 stdout/stderr 是历史记录，包含已移除界面的测试名称和路径。
+它们不代表当前接口、安装状态、服务健康或本次模型连通性；当前版本无需运行旧 Pi 扩展测试。
+这些记录中的源码哈希只对应当时版本，不重新计算它们来宣称新版本通过验收。
 
-2026-09-26追加验证（原失败／暂停记录均保留）：
+- [后台服务与只读查询](codex-interface-20260929/README.md)
+- [授权集成及故障恢复](pi-integration-20260929/README.md)
+- [服务部署与真实后台调用](service-deployment-20260929/README.md)
+- [返工与旧任务恢复](rework-20260928/README.md)
+- [提交故障与缓存归档](submission-recovery-20260928/README.md)
 
-5. 同一示例的 `attempt-0002`：Pi 32.42秒正常完成，控制器2项测试通过；Codex没有完成审计，
-   日志反复出现网络不可达／请求超时，约1202秒后被1200秒阶段预算终止。该次启动未录制代理环境，
-   因此不能断言一定缺少代理，也不能把网络失败解释成模型推理太慢。
-6. `attempt-0003`：显式为控制器提供本机HTTP/HTTPS代理环境，并按已有命令恢复为新attempt。
-   Pi仍直连Bonsai，RPC确认 `bonsai / bonsai2-27b / xhigh`；Pi用时33.06秒，控制器2项测试通过；
-   Codex使用原配置 `gpt-6-astra / xhigh`，用时281.78秒，进程exit0、`turn.completed`、
-   摘要匹配的无遗留问题accepted结论齐全。审计包含独立复跑、144个整数边界和48个非法类型探针。
-   SQLite最终为 `accepted / done / attempt=3`，无活动PID。单阶段1200秒上限未变，未修改程序源码。
+部分历史导出为文字规范化后的展示件。2026-09-28 的更名说明及原始／展示哈希见
+[name-migration.json](name-migration.json)；2026-09-30 的项目专属措辞清理见
+[documentation-cleanup.json](documentation-cleanup.json)。后者仅调整三个导出的说明文字，
+结论、attempt、计时及受测源码哈希不变。未经改动的历史原件保留在各记录指定的 Git 提交中：
 
-**该微型任务的完整真实闭环现已通过一次。** 本次仍有可恢复重连诊断；不将一次通过推广为稳定性或
-KMesh接入已验证。原始材料在上述state目录；可分享的摘要见
-[live-proxy-recovery-summary.json](live-proxy-recovery-summary.json)。JSONL完成事件的说明见
-[OpenAI Docs非交互模式](https://learn.chatgpt.com/docs/non-interactive-mode)。
+```bash
+git show COMMIT:validation/PATH
+```
 
-前台 `run` 不读取后台unit保存的代理环境。需要代理时使用README的显式环境示例；
-后台默认队列和本示例的独立state目录仍分开。本示例已accepted，无需再resume/run。
-
-没有向真实会话发送测试通知。通知重试、稳定事件 ID、验收/通知原子事务由假 agent
-故障注入测试覆盖；`codex queue` 成功也仅代表入队，不代表用户已读。
-
-## 本机安装
-
-代码安装于 `/home/mye/src/llm/codinator`，虚拟环境内 editable 安装，无运行时第三方依赖。
-`codinator doctor` 通过。用户级 `codinator.service` 已启用，默认队列为空。
-服务保存本机 Codex 代理，Pi 直连规则在派生进程单独生效。未修改全局模型/代理配置。
-
-KMesh 工作树未被本项目实施或联调修改。本次2026-09-26排障仅更新操作说明与脱敏证据，未commit/push。
+旧任务的仓外数据库、manifest 和 attempt 原件未搬迁或改写。原生 Pi 任务不自动转为后台任务，
+也不能通过重用状态目录或重复发布来绕过旧冻结证据。
