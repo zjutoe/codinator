@@ -1,6 +1,6 @@
 # Codinator
 
-[Chinese version](README.md)
+[Chinese version](README_CN.md)
 
 ## Overview
 
