@@ -99,6 +99,27 @@ can receive one repair of at most five minutes within the remaining budget, with
 evidence read-only. The controller pins the selected delivery before checks and independent review.
 See [delivery and bounded repair](docs/codex-interface.md#实施交付与一次自动修复) (Chinese) for exclusions and evidence rules.
 
+An optional `checkpoint_seconds` requests implementation progress through Pi RPC `steer` at that interval.
+For example, `checkpoint_seconds: 1800` with `attempt_seconds: 5400` requests progress every 30 minutes
+within a 90-minute hard process limit. Steering reaches the next safe tool/turn boundary; it does not
+interrupt a long tool, restart a session, resend the implementation prompt, or extend any budget.
+`status.latest_checkpoint` distinguishes the latest request, its RPC acknowledgement, the latest structured
+report, and unanswered requests. A report records the implementer's claims, including completed work,
+checks actually run, blockers, next step and `needs_guidance`; it cannot trigger acceptance.
+Every request requires a valid attempt-bound report within a fixed five-minute response grace. Empty completed
+work/check arrays are allowed; blockers must be honest. A missing/invalid report past that grace or a report
+with `needs_guidance=true` makes the controller block the attempt at the next boundary with no active tool.
+An active tool may finish under the unchanged hard deadline; a late report cannot clear an already recorded
+violation. A timely `needs_guidance=false` report permits continued work and the next checkpoint, so this is
+not a 35-minute limit on a healthy 30-minute checkpoint task. Main Codex guides the frozen blocked task;
+there is no automatic redispatch or planner model.
+
+Normal agent completion still checks outstanding responses. Only the final checkpoint may be resolved by a
+valid formal delivery received before its response grace expires; `resolutions/` explicitly records
+`source=final_delivery`, without claiming a progress report was received. Older accepted pilot evidence is
+left unchanged. `status` distinguishes missing reports, controller resolutions, a latched `violation`,
+and the actual safe-boundary `stop` record.
+
 A normal `resume` creates a new implementation attempt and preserves previous evidence.
 If Pi completed delivery and all checks passed, but Codex review was interrupted by quota,
 connectivity, or process failure, you can explicitly retry only the review:
@@ -154,6 +175,8 @@ this version does not automatically update status text in project READMEs or han
 - `checks[].argv`: an argument array used to launch a process directly, without an implicit shell. Checks run against a read-only workspace; write temporary output to `/tmp`.
 - `excludes`: environment or cache paths omitted from content snapshots. They cannot cover tracked files or overlap the allowed modification scope.
 - `max_rounds`, `max_seconds`, `attempt_seconds`: execution limits established before publication.
+- `checkpoint_seconds`: optional positive integer smaller than `attempt_seconds`; implementation-only soft progress requests. Omission preserves existing behavior.
+- `deadline_utc`: optional absolute ceiling, such as `2026-10-02T06:00:09Z` or the equivalent `+00:00` timestamp. First dispatch uses the earlier of this ceiling and `now + max_seconds`; an expired task starts no agent. Queue delays and explicit resume budget extensions cannot move this frozen ceiling.
 - `notify_thread`: an optional Codex session ID explicitly selected by the user. Without it, notifications remain local and are not sent externally.
 
 If a task needs a separate worktree, create it manually or through Codex, establish its environment
@@ -185,6 +208,15 @@ tasks/<task>/
     delivery-error.json               Field-level diagnostics, if original delivery is invalid
     delivery-repair/                  Optional single repair: bound tool, contract, Pi evidence, delivery/
     delivery-selection.json           Controller-selected directory and both file identities
+    checkpoint-contract.json          Optional read-only progress identity and destination
+    submit-checkpoint.py              Bound progress-only submission command
+    checkpoints/requests/             Controller-issued numbered steer requests
+    checkpoints/acks/                 RPC acknowledgements; not progress reports
+    checkpoints/reports/              Numbered implementer progress claims
+    checkpoints/policy.json           Fixed five-minute response grace for new attempts
+    checkpoints/resolutions/          Controller-frozen report or timely final-delivery substitution
+    checkpoints/violation.json        Latched timeout/guidance requirement, if any
+    checkpoints/stop.json             Controller stop after active tools finished
     checks/<name>/                   Controller-run commands, exit codes, raw output
     codex/                           Raw independent review events and exit records
     review-delivery/verdict.json      Structured verdict bound to the submission digest

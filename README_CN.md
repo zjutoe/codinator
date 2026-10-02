@@ -84,6 +84,22 @@ Pi 确认正常结束且范围检查通过后，缺失或格式错误的交付�
 专项修复，工作树及原证据只读。控制器固定选用的交付后再执行检查与独立审查。
 排除条件与证据规则见 [实施交付与一次自动修复](docs/codex-interface.md#实施交付与一次自动修复)。
 
+可选 `checkpoint_seconds` 通过 Pi RPC `steer` 按间隔请求实施进展。例如设置
+`checkpoint_seconds: 1800`、`attempt_seconds: 5400`，就是每 30 分钟软检查、单进程 90 分钟硬上限。
+请求在下一个安全工具／轮次边界送达，不强制打断长工具，不重启会话、不重发实施 prompt，也不延长预算。
+`status.latest_checkpoint` 分别显示最近请求、RPC 确认、最近结构化进展和未回应请求；进展包含完成事项、
+实际执行的检查、阻塞、下一步及 `needs_guidance`，属于实施者声明，不能触发验收。
+每次请求必须在固定五分钟回应宽限内提交合法、绑定当前 attempt 的报告；完成事项和检查数组可以为空，
+但阻塞必须如实报告。超过宽限仍无合法报告，或报告 `needs_guidance=true`，控制器会在没有活动工具的
+下一个安全边界阻断本 attempt。活动工具可以先完成，但仍受原硬上限约束；已记录的违约不能被迟到报告
+撤销。及时提交 `needs_guidance=false` 的正常任务继续工作并进入下一软检查点，不会一律在第 35 分钟终止。
+主 Codex 指导冻结后的 blocked 任务；控制器不自动重派或启动 planner 模型。
+
+agent 正常结束时仍会核对未回应请求。只有最后一个检查点、尚在回应宽限内且正式交付合法时，才允许
+以正式交付替代，并在 `resolutions/` 明确记录 `source=final_delivery`，不冒充已经收到进展报告。
+旧试点已经 accepted 的证据不追溯改判。`status` 区分缺失报告、控制器 resolution、已锁定的 `violation`
+和活动工具结束后实际执行的 `stop` 记录。
+
 普通 `resume` 创建新的实施 attempt，旧证据保留。Pi 已完整交付、检查通过，
 仅 Codex 审查因额度、连接或进程中断而未完成时，可以显式只恢复审查：
 
@@ -126,6 +142,8 @@ SQLite 是状态的唯一来源；本版不自动改写项目 README／交接文
 - `checks[].argv`：参数数组，直接启动进程，不经过隐式 shell。检查在只读工作树中运行；临时产物写 `/tmp`。
 - `excludes`：不纳入内容快照的环境／缓存路径；不能覆盖 tracked 文件，也不能与允许修改范围相交。
 - `max_rounds`、`max_seconds`、`attempt_seconds`：发布前确定的执行边界。
+- `checkpoint_seconds`：可选正整数，须小于 `attempt_seconds`；仅实施阶段启用软进展请求，省略时沿用原行为。
+- `deadline_utc`：可选绝对截止，如 `2026-10-02T06:00:09Z` 或等价的 `+00:00` 时间。首次派发取该截止与 `now + max_seconds` 较早者；已过期不启动 agent。排队延迟及显式恢复增加预算均不能推迟这个冻结上限。
 - `notify_thread`：可选，用户明确指定的 Codex 会话 ID。未设置时保留本地通知，不向外发送。
 
 新任务需要单独 worktree 时先人工／Codex 创建，明确环境与基线，再发布。
@@ -155,6 +173,15 @@ tasks/<task>/
     delivery-error.json                原交付无效时的逐字段诊断
     delivery-repair/                   可选的一次修复：绑定工具、契约、Pi 证据及 delivery/
     delivery-selection.json            控制器选定的交付目录及两个文件身份
+    checkpoint-contract.json           可选的只读进展身份与目标目录
+    submit-checkpoint.py                绑定的进展专用提交命令
+    checkpoints/requests/              控制器发出的编号 steer 请求
+    checkpoints/acks/                  RPC 确认；不代表收到进展
+    checkpoints/reports/               实施者提交的编号进展声明
+    checkpoints/policy.json            新 attempt 固定五分钟回应宽限
+    checkpoints/resolutions/           控制器冻结的报告或及时正式交付替代记录
+    checkpoints/violation.json         已锁定的超时／指导要求（若有）
+    checkpoints/stop.json              活动工具结束后的控制器阻断记录
     checks/<name>/                    调度器独立执行的命令、退出码、原始输出
     codex/                            独立审计的原始事件与退出记录
     review-delivery/verdict.json       绑定本轮摘要的结构化验收结果

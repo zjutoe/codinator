@@ -1,6 +1,7 @@
 """Read-only task reports for a frontend; never resume, dispatch or accept work."""
 import json
 
+from .checkpoints import status as checkpoint_status
 from .files import Problem
 from .process import process_start
 
@@ -16,6 +17,14 @@ def report(store, task):
                   process_alive=bool(task['pid'] and task['pid_start']
                                      and process_start(task['pid']) == task['pid_start']),
                   latest_review=None)
+    if 'checkpoint_seconds' in task['manifest']:
+        result['checkpoint_seconds'] = task['manifest']['checkpoint_seconds']
+        result['latest_checkpoint'] = None
+        for number in range(task['attempt'], 0, -1):
+            progress = checkpoint_status(directory / f'attempt-{number:04d}', task['id'], number)
+            if progress is not None:
+                result['latest_checkpoint'] = progress
+                break
     if task.get('integration'):
         result['integration'] = task['integration']
         result['review_accepted'] = True

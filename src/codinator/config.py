@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 import re
 
@@ -11,6 +12,16 @@ def positive(value, name):
     if type(value) is not int or value <= 0:
         raise Problem(f"{name} must be a positive integer")
     return value
+
+
+def deadline_timestamp(value):
+    if (type(value) is not str or not re.fullmatch(
+            r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|\+00:00)', value)):
+        raise Problem('deadline_utc must be an ISO8601 timestamp with explicit UTC (Z or +00:00)')
+    try:
+        return datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
+    except ValueError as exc:
+        raise Problem('Invalid deadline_utc calendar timestamp') from exc
 
 
 def relative(value):
@@ -27,7 +38,8 @@ def relative(value):
 def load_manifest(path):
     raw = json.loads(Path(path).read_text())
     allowed_keys = {"version", "id", "workspace", "handoff", "allowed_paths", "checks", "excludes",
-                    "max_rounds", "max_seconds", "attempt_seconds", "notify_thread", "integration"}
+                    "max_rounds", "max_seconds", "attempt_seconds", "checkpoint_seconds", "deadline_utc",
+                    "notify_thread", "integration"}
     if type(raw) is not dict or set(raw) - allowed_keys:
         raise Problem("Unknown manifest field(s)")
     if raw.get("version") != 1 or type(raw.get("version")) is not int:
@@ -77,6 +89,11 @@ def load_manifest(path):
         check["timeout_seconds"] = positive(check.get("timeout_seconds", 120), "check timeout")
     for key, default in (("max_rounds", 4), ("max_seconds", 14400), ("attempt_seconds", 7200)):
         raw[key] = positive(raw.get(key, default), key)
+    if 'checkpoint_seconds' in raw:
+        if positive(raw['checkpoint_seconds'], 'checkpoint_seconds') >= raw['attempt_seconds']:
+            raise Problem('checkpoint_seconds must be less than attempt_seconds')
+    if 'deadline_utc' in raw:
+        deadline_timestamp(raw['deadline_utc'])
     if raw.get("notify_thread") is not None and (not isinstance(raw["notify_thread"], str) or not raw["notify_thread"].strip()):
         raise Problem("notify_thread must be a nonempty string")
     if "integration" in raw:

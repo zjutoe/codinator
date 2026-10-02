@@ -1,7 +1,9 @@
 import json
 import os
 from pathlib import Path
+import time
 
+from .checkpoints import Checkpoints
 from .files import Problem, write_json
 from .delivery import prepare_contract, selected_delivery
 from .process import run_process
@@ -9,7 +11,7 @@ from .sandbox import codex_home, pi_home
 
 
 class PiProtocol:
-    def __init__(self, prompt, state_path):
+    def __init__(self, prompt, state_path, *, checkpoints=None):
         self.prompt = prompt
         self.state_path = state_path
         self.pending = "state"
@@ -18,12 +20,32 @@ class PiProtocol:
         self.settled = False
         self.final_reason = None
         self.final_error = None
+        self.checkpoints = checkpoints
+        self.active = False
+        self.active_tools = set()
 
     def start(self, send):
+        if self.checkpoints:
+            self.checkpoints.start(time.monotonic())
         send({"id": "state", "type": "get_state"})
+
+    def observe(self, now):
+        if self.checkpoints:
+            self.checkpoints.observe(now)
+
+    def tick(self, now, send, *, safe_boundary=True):
+        self.observe(now)
+        if self.checkpoints and safe_boundary:
+            self.checkpoints.enforce(now, self.active_tools)
+        if (self.checkpoints and self.prompt_sent and self.ack and self.active and not self.settled
+                and self.checkpoints.violation is None
+                and self.final_reason not in ('stop', 'error', 'aborted', 'length')):
+            self.checkpoints.tick(now, send)
 
     def event(self, event, send):
         kind = event.get("type")
+        if kind == 'response' and self.checkpoints and self.checkpoints.response(event):
+            return False
         if kind == "message_end" and type(event.get("message")) is not dict:
             raise Problem("Pi message_end.message must be an object")
         if kind == "response" and event.get("id") in ("state", "prompt"):
@@ -56,14 +78,38 @@ class PiProtocol:
             raise Problem("Pi requested interactive input; task requires human attention")
         elif kind == "extension_error":
             raise Problem("Pi extension error; inspect events")
+        elif kind in ('tool_execution_start', 'tool_execution_end') and self.checkpoints:
+            tool_id = event.get('toolCallId')
+            if type(tool_id) is not str or not tool_id:
+                raise Problem('Missing Pi tool execution identity')
+            if kind == 'tool_execution_start':
+                if tool_id in self.active_tools:
+                    raise Problem('Duplicate active Pi tool execution identity')
+                self.active_tools.add(tool_id)
+            else:
+                if tool_id not in self.active_tools:
+                    raise Problem('Unknown Pi tool execution completion')
+                self.active_tools.remove(tool_id)
+                if self.settled and not self.active_tools:
+                    return True
+        elif kind == 'agent_start':
+            self.active = True
+            self.final_reason = None
+        elif kind == 'agent_end':
+            self.active = False
         elif kind == "agent_settled":
             self.settled = True
-            return True
+            self.active = False
+            return not self.active_tools
         return False
 
     def finish(self):
         if not (self.prompt_sent and self.ack and self.settled and self.final_reason == "stop"):
             raise Problem(f"Pi did not complete successfully: settled={self.settled}, stopReason={self.final_reason}, error={self.final_error}")
+        if self.active_tools:
+            raise Problem('Pi completion still has active tools')
+        if self.checkpoints:
+            self.checkpoints.finish(time.monotonic())
 
 
 def _delivery_instructions(context, submit):
@@ -78,7 +124,7 @@ completion.json or create workspace delivery/. A submitted receipt is not accept
 
 
 def _pi_worker(prompt, context, private, sandbox, process_options, root, *,
-               delivery_instructions, allowed=(), readonly=(), pi_bin="pi"):
+               delivery_instructions, allowed=(), readonly=(), checkpoints=None, pi_bin="pi"):
     config = pi_home(private / "pi")
     (context / "worker-prompt.txt").write_text(prompt)
     argv = [pi_bin, "--mode", "rpc", "--provider", "bonsai", "--model", "bonsai2-27b", "--thinking", "xhigh",
@@ -89,9 +135,12 @@ def _pi_worker(prompt, context, private, sandbox, process_options, root, *,
     env.update({"PI_CODING_AGENT_DIR": str(config), "PI_OFFLINE": "1", "PYTHONDONTWRITEBYTECODE": "1",
                 "PYTHONPYCACHEPREFIX": str(config / 'pycache'),
                 "NO_PROXY": "*", "no_proxy": "*", "NODE_USE_ENV_PROXY": "0"})
-    run_process(sandbox.wrap(argv, root, allowed, [context / 'delivery', config], readonly=readonly),
+    writable = [context / 'delivery', config]
+    if checkpoints:
+        writable.append(checkpoints.directory / 'reports')
+    run_process(sandbox.wrap(argv, root, allowed, writable, readonly=readonly),
                 cwd=root, env=env, out=context / "pi",
-                protocol=PiProtocol(prompt, context / "pi-runtime.json"), **process_options)
+                protocol=PiProtocol(prompt, context / "pi-runtime.json", checkpoints=checkpoints), **process_options)
 
 
 def worker(task, attempt_dir, private, sandbox, process_options, pi_bin="pi"):
@@ -101,6 +150,19 @@ def worker(task, attempt_dir, private, sandbox, process_options, pi_bin="pi"):
     delivery.mkdir()
     submit = prepare_contract(task, attempt_dir, delivery)
     instructions = _delivery_instructions(attempt_dir, submit)
+    checkpoints = None
+    if 'checkpoint_seconds' in manifest:
+        checkpoints = Checkpoints(task, attempt_dir, manifest['checkpoint_seconds'])
+        instructions += (f'Soft checkpoints every {manifest["checkpoint_seconds"]} seconds use RPC steer.\n'
+                         f'Checkpoint contract: {attempt_dir / "checkpoint-contract.json"}\n'
+                         f'Bound progress command: {checkpoints.command}\n'
+                         'Each request requires a valid progress report within five minutes. completed/checks '
+                         'may be empty; honestly record blockers. Missing/invalid reports past this grace or '
+                         'needs_guidance=true cause the controller to block at the next boundary with no active tool. '
+                         'A valid needs_guidance=false report permits continued work until the next checkpoint. '
+                         'Progress is not completion and never extends the hard budget. If repeated failures, '
+                         'an unclear contract or needs_guidance arise, submit honest blocked DELIVERY and stop '
+                         'for the main Codex to guide the frozen task.\n')
     prompt = f"""You are the IMPLEMENTER in a Codinator task, not its reviewer.
 Task: {manifest['id']}; round {task['round']}; attempt {task['attempt']}.
 Read the published handoff at {root / manifest['handoff']} and applicable AGENTS.md.
@@ -125,7 +187,7 @@ Then stop. You may not declare accepted. Each edit/check must remain within this
 """
     _pi_worker(prompt, attempt_dir, private, sandbox, process_options, root,
                delivery_instructions=instructions, allowed=manifest['allowed_paths'],
-               readonly=[attempt_dir], pi_bin=pi_bin)
+               readonly=[attempt_dir], checkpoints=checkpoints, pi_bin=pi_bin)
 
 
 def repair_delivery(task, attempt_dir, private, sandbox, process_options, error, pi_bin="pi"):

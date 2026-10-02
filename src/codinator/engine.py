@@ -5,7 +5,7 @@ import time
 
 from .agents import repair_delivery, reviewer, worker
 from .bytecode import clean_bytecode
-from .config import positive
+from .config import deadline_timestamp, positive
 from .delivery import DeliveryError, select_delivery, selected_delivery, validate_delivery
 from .files import Problem, assert_scope, changes, digest, preserve, snapshot, write_json
 from .process import Interrupted, process_start, run_process, stop_group
@@ -106,7 +106,10 @@ class Engine:
                 return
             if task['deadline'] is None:
                 now = time.time()
-                self.store.update(task_id, started=now, deadline=now + m['max_seconds'])
+                deadline = now + m['max_seconds']
+                if 'deadline_utc' in m:
+                    deadline = min(deadline, deadline_timestamp(m['deadline_utc']))
+                self.store.update(task_id, started=now, deadline=deadline)
                 task = self.store.get(task_id)
             root = Path(m['workspace'])
             try:
@@ -304,7 +307,12 @@ class Engine:
             deadline = task['deadline']
             if extra_seconds:
                 deadline = max(time.time(), deadline or time.time()) + extra_seconds
+                if 'deadline_utc' in task['manifest']:
+                    deadline = min(deadline, deadline_timestamp(task['manifest']['deadline_utc']))
             override = task['attempt_seconds_override'] if attempt_seconds is None else attempt_seconds
+            effective_limit = override if override is not None else task['manifest']['attempt_seconds']
+            if task['manifest'].get('checkpoint_seconds', 0) >= effective_limit:
+                raise Problem('checkpoint_seconds must remain less than the resumed attempt limit')
             feedback = task['feedback'] + '\nPrevious interruption: ' + task['reason']
             if attempt_seconds is not None or extra_seconds:
                 effective_limit = override if override is not None else task['manifest']['attempt_seconds']

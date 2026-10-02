@@ -54,32 +54,64 @@ def run_process(argv, *, cwd, env, out, timeout, on_start=lambda p, s: None,
     out = Path(out)
     out.mkdir(parents=True, exist_ok=False)
     started = time.time()
+    deadline = time.monotonic() + timeout
     write_json(out / "launch.json", {"argv": argv, "cwd": str(cwd), "started": started, "timeout_seconds": timeout})
     code, failure, proc, identity = None, None, None, None
     try:
         with (out / "stdout.jsonl" if protocol else out / "stdout.txt").open("xb") as stdout, (out / "stderr.txt").open("xb") as stderr:
             proc = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.PIPE if protocol else subprocess.DEVNULL,
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True, bufsize=0)
             identity = process_start(proc.pid)
             write_json(out / "process.json", {"pid": proc.pid, "start": identity})
             on_start(proc.pid, identity)
-            def send(obj):
-                proc.stdin.write((json.dumps(obj, ensure_ascii=False) + "\n").encode())
-                proc.stdin.flush()
-            if protocol:
-                protocol.start(send)
             buffer = b""
             done = False
-            deadline = time.monotonic() + timeout
+            pending = bytearray()
+            if protocol:
+                os.set_blocking(proc.stdin.fileno(), False)
             with selectors.DefaultSelector() as sel:
                 sel.register(proc.stdout, selectors.EVENT_READ, stdout)
                 sel.register(proc.stderr, selectors.EVENT_READ, stderr)
+
+                def send(obj):
+                    data = (json.dumps(obj, ensure_ascii=False) + '\n').encode()
+                    if len(pending) + len(data) > 16 * 1024 * 1024:
+                        raise Problem('RPC input backlog exceeds 16 MiB')
+                    if not pending:
+                        sel.register(proc.stdin, selectors.EVENT_WRITE)
+                    pending.extend(data)
+
+                if protocol:
+                    protocol.start(send)
                 while sel.get_map():
                     if cancel():
                         raise Interrupted("Pause/cancel requested")
                     if time.monotonic() >= deadline:
                         raise Problem("Process exceeded wall-clock budget")
-                    for key, _ in sel.select(0.2):
+                    observe = getattr(protocol, 'observe', None)
+                    if observe is not None:
+                        observe(time.monotonic())
+                    # Drain available output before writing queued input, so a
+                    # terminal event can discard pending steering requests.
+                    ready = sorted(sel.select(0.2), key=lambda item: item[0].fileobj is proc.stdin)
+                    for key, _ in ready:
+                        if key.fileobj is proc.stdin:
+                            if done:
+                                continue
+                            if cancel():
+                                raise Interrupted('Pause/cancel requested')
+                            if time.monotonic() >= deadline:
+                                raise Problem('Process exceeded wall-clock budget')
+                            try:
+                                written = os.write(key.fd, pending[:65536])
+                            except BlockingIOError:
+                                continue
+                            except BrokenPipeError as exc:
+                                raise Problem('Agent closed RPC input before completion') from exc
+                            del pending[:written]
+                            if not pending:
+                                sel.unregister(proc.stdin)
+                            continue
                         data = os.read(key.fd, 65536)
                         if not data:
                             sel.unregister(key.fileobj)
@@ -101,6 +133,11 @@ def run_process(argv, *, cwd, env, out, timeout, on_start=lambda p, s: None,
                                 if type(event) is not dict:
                                     raise Problem("Agent event must be a JSON object")
                                 done = protocol.event(event, send) or done
+                    # A tool-end record may be followed by the next tool-start
+                    # beyond this read chunk. Drain already available RPC output
+                    # before deciding that the protocol is at a safe boundary.
+                    safe_boundary = not buffer and not any(
+                        key.fileobj is proc.stdout for key, _ in sel.select(0))
                     if done:
                         protocol.finish()
                         # One prompt per process. No further continuation may own this workspace.
@@ -108,6 +145,16 @@ def run_process(argv, *, cwd, env, out, timeout, on_start=lambda p, s: None,
                         proc.wait(timeout=5)
                         code = 0
                         break
+                    # Observe terminal events first. A soft timer must never postpone
+                    # cancellation or the hard deadline, even after a busy read batch.
+                    if cancel():
+                        raise Interrupted('Pause/cancel requested')
+                    now = time.monotonic()
+                    if now >= deadline:
+                        raise Problem('Process exceeded wall-clock budget')
+                    tick = getattr(protocol, 'tick', None)
+                    if tick is not None and sel.get_map():
+                        tick(now, send, safe_boundary=safe_boundary)
                 if buffer.strip():
                     raise Problem("Truncated JSONL record at process exit")
             if code is None:

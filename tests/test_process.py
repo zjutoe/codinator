@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+import signal
 import sys
 import tempfile
 import time
@@ -31,6 +32,27 @@ class ProcessTests(unittest.TestCase):
         with self.assertRaises(Interrupted):
             self.run_code('import time; time.sleep(20)', cancel=lambda: True)
         self.assertIn('Interrupted', json.loads((self.root / 'run/result.json').read_text())['failure'])
+
+    def test_initial_rpc_write_is_already_subject_to_hard_deadline(self):
+        class Protocol:
+            def start(self, send):
+                send({'type': 'prompt', 'message': 'x' * 200000})
+            def event(self, event, send):
+                return False
+            def finish(self):
+                raise AssertionError('Incomplete protocol must not finish')
+        def watchdog(*_):
+            raise TimeoutError('Initial RPC write blocked before the deadline was established')
+        previous = signal.signal(signal.SIGALRM, watchdog)
+        signal.setitimer(signal.ITIMER_REAL, 6)
+        try:
+            with self.assertRaisesRegex(Problem, 'wall-clock budget'):
+                self.run_code('import time; time.sleep(60)', protocol=Protocol(), timeout=.3)
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, previous)
+        result = json.loads((self.root / 'run/result.json').read_text())
+        self.assertIn('wall-clock budget', result['failure'])
 
     def test_orphan_child_killed_before_leader_reaped(self):
         pid_file = self.root / 'child.pid'
