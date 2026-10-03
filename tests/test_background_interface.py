@@ -3,7 +3,6 @@ from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
-import py_compile
 import sqlite3
 import subprocess
 import sys
@@ -13,68 +12,13 @@ import unittest
 from unittest.mock import patch
 
 import test_engine
-from codinator.agents import worker as real_worker
-from codinator.files import Problem, digest, snapshot, write_json
+from codinator.files import Problem, write_json
 from codinator.process import process_start
 from codinator.store import Store
 
 
 class BackgroundInterfaceTests(unittest.TestCase):
     setUp = test_engine.EngineTests.setUp
-
-    def test_completed_worker_archives_new_caches_before_freezing(self):
-        cache = {}
-        def worker(*args):
-            result = real_worker(*args)
-            path = Path(py_compile.compile(str(self.workspace / 'product.py'), doraise=True))
-            cache.update(path=path, data=path.read_bytes())
-            return result
-        with patch('codinator.engine.worker', side_effect=worker):
-            self.engine.run('test')
-        task = self.store.get('test')
-        self.assertEqual(task['state'], 'accepted', task['reason'])
-        archive, = (self.store.root / 'tasks/test').glob('cache-cleanup-*')
-        self.assertEqual((archive / 'removed' / cache['path'].relative_to(self.workspace)).read_bytes(), cache['data'])
-        self.assertFalse(cache['path'].exists())
-        self.assertEqual(task['expected_digest'], digest(snapshot(self.workspace, self.manifest['excludes'])))
-
-    def test_another_violation_prevents_cleanup_and_review(self):
-        def worker(*args):
-            result = real_worker(*args)
-            py_compile.compile(str(self.workspace / 'product.py'), doraise=True)
-            (self.workspace / 'outside.txt').write_text('retain evidence')
-            return result
-        with patch('codinator.engine.worker', side_effect=worker), \
-             patch('codinator.engine.reviewer', side_effect=AssertionError('invalid submission')):
-            self.engine.run('test')
-        self.assertEqual(self.store.get('test')['state'], 'blocked')
-        self.assertTrue(list(self.workspace.glob('__pycache__/*.pyc')))
-        self.assertFalse(list((self.store.root / 'tasks/test').glob('cache-cleanup-*')))
-        evidence = self.engine.attempt_path(self.store.get('test')) / 'implementation.json'
-        self.assertIn('outside.txt', json.loads(evidence.read_text())['files'])
-
-    def test_archive_failure_blocks_before_review_and_retains_bytes(self):
-        def worker(*args):
-            result = real_worker(*args)
-            py_compile.compile(str(self.workspace / 'product.py'), doraise=True)
-            return result
-        with patch('codinator.engine.worker', side_effect=worker), \
-             patch('codinator.bytecode.preserve', side_effect=OSError('archive unavailable')), \
-             patch('codinator.engine.reviewer', side_effect=AssertionError('must not review')):
-            self.engine.run('test')
-        self.assertEqual(self.store.get('test')['state'], 'blocked')
-        self.assertIn('archive unavailable', self.store.get('test')['reason'])
-        self.assertTrue(list(self.workspace.glob('__pycache__/*.pyc')))
-
-    def test_frozen_review_never_cleans_new_caches(self):
-        def review(task, attempt, fingerprint, *args, **kwargs):
-            py_compile.compile(str(self.workspace / 'product.py'), doraise=True)
-            return {'verdict': 'accepted', 'summary': 'Stale fixture verdict', 'issues': []}
-        with patch('codinator.engine.reviewer', side_effect=review):
-            self.engine.run('test')
-        self.assertEqual(self.store.get('test')['state'], 'blocked')
-        self.assertIn('changed during review', self.store.get('test')['reason'])
-        self.assertTrue(list(self.workspace.glob('__pycache__/*.pyc')))
 
     def test_pause_or_cancel_wins_over_late_verdict(self):
         for control in ('pause', 'cancel'):
@@ -88,18 +32,6 @@ class BackgroundInterfaceTests(unittest.TestCase):
                     self.engine.run('test')
                 self.assertEqual(self.store.get('test')['state'], 'paused' if control == 'pause' else 'cancelled')
                 self.assertFalse((self.engine.attempt_path(self.store.get('test')) / 'outcome.json').exists())
-
-    def test_pause_during_preflight_prevents_dispatch(self):
-        def preflight(*args):
-            result = snapshot(*args)
-            if self.store.get('test')['state'] == 'ready':
-                self.store.request_control('test', 'pause')
-            return result
-        with patch('codinator.engine.snapshot', side_effect=preflight), \
-             patch('codinator.engine.worker', side_effect=AssertionError('paused before dispatch')):
-            self.engine.run('test')
-        task = self.store.get('test')
-        self.assertEqual((task['state'], task['attempt']), ('paused', 0))
 
     def test_publication_and_concurrent_pause_are_serialized(self):
         started, finished = threading.Event(), threading.Event()
@@ -163,6 +95,10 @@ class BackgroundInterfaceTests(unittest.TestCase):
                 service.wait(timeout=10)
 
     def test_service_reworks_after_frontend_exits_and_queries_do_not_pause(self):
+        from legacy_fixture import submit_legacy
+        legacy = {k: v for k, v in self.manifest.items() if k != 'git'}
+        legacy.update(version=1, id='legacy', excludes=[])
+        submit_legacy(self.engine, legacy)
         gate = self.base / 'gate'
         with self.service(gate) as (service, env):
             deadline = time.monotonic() + 25
@@ -193,6 +129,8 @@ class BackgroundInterfaceTests(unittest.TestCase):
             self.assertTrue((self.store.root / 'tasks/test/attempt-0001/outcome.json').exists())
             self.assertTrue((self.store.root / 'tasks/test/attempt-0002/outcome.json').exists())
             self.assertIsNone(task['manifest'].get('notify_thread'))
+            self.assertEqual(self.store.get('legacy')['state'], 'ready')
+            self.assertEqual(self.store.get('legacy')['attempt'], 0)
 
     def test_service_restart_requires_explicit_resume_and_preserves_attempt(self):
         gate = self.base / 'gate'

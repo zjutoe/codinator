@@ -2,9 +2,8 @@
 import json
 from pathlib import Path
 
-from .files import Problem, assert_scope, changes, digest, file_info
-from .delivery import selected_delivery, validate_delivery
-from . import git_source
+from .files import Problem, file_info
+from .delivery import selected_delivery, validate_delivery, read_submission
 
 
 def require_unfinished_review(attempt):
@@ -17,7 +16,9 @@ def require_unfinished_review(attempt):
 
 
 def checkpoint(store, task, sandbox, *, accepted=False):
-    """Validate legacy evidence too; return a content-pinned original source."""
+    """Pin original handoff evidence; the reviewer must independently recheck Git/tests."""
+    if task['manifest']['version'] != 2:
+        raise Problem('Version 1 tasks are read-only history')
     previous = task['review_resume']
     number = previous['source_attempt'] if previous else task['attempt']
     if type(number) is not int or not 0 < number <= task['attempt']:
@@ -26,7 +27,7 @@ def checkpoint(store, task, sandbox, *, accepted=False):
     files = {}
 
     def evidence(name):
-        path = source / name
+        path = source.parent / name[3:] if name.startswith('../') else source / name
         if path.resolve() != path.absolute() or not path.is_file():
             raise Problem(f'Missing or linked review evidence: {name}')
         info = file_info(path)
@@ -52,7 +53,7 @@ def checkpoint(store, task, sandbox, *, accepted=False):
             raise Problem(f'Review process evidence hashes do not match: {name}')
         return document(name + '/launch.json')
 
-    # Only the controller can attest that Pi delivery and all checks were accepted.
+    # State proves dispatch reached review, not that project checks or Git were verified.
     attempt, entered_review, entered_repair = 0, False, False
     for row in store.db.execute("SELECT payload FROM events WHERE task_id=? AND kind='state' ORDER BY seq", (task['id'],)):
         fields = json.loads(row[0])
@@ -67,32 +68,19 @@ def checkpoint(store, task, sandbox, *, accepted=False):
         require_unfinished_review(source)
     before, submitted = document('before.json'), document('submission.json')
     manifest = task['manifest']
-    if manifest['version'] == 2:
-        git_source.validate_transition(manifest, before, submitted)
-        git_source.verify(manifest, submitted)
-        fingerprint = submitted['commit']
-        paths = git_source.changed_paths(manifest, before, submitted)
-        intent = document('git-submission-intent.json')
-        if (set(intent) != {'version', 'task_id', 'attempt', 'purpose', 'workspace', 'before', 'candidate'}
-                or intent.get('version') != 1 or intent.get('purpose') != 'submission'
-                or intent.get('workspace') != manifest['workspace']
-                or intent.get('task_id') != task['id'] or intent.get('attempt') != number
-                or intent.get('before') != before or intent.get('candidate') != submitted
-                or document('git-submission-result.json') != submitted):
-            raise Problem('Git checkpoint intent/result does not match the reviewed attempt')
-    else:
-        for name, value in (('before.json', before), ('submission.json', submitted)):
-            if (type(value.get('git')) is not dict or type(value.get('root_mode')) is not int
-                    or type(value.get('files')) is not dict
-                    or any(type(k) is not str or type(v) is not dict for k, v in value['files'].items())):
-                raise Problem(f'Malformed snapshot evidence: {name}')
-        fingerprint = digest(submitted)
-        assert_scope(before, submitted, manifest['allowed_paths'])
-        paths = changes(before, submitted)
-    if fingerprint != task['expected_digest']:
-        raise Problem('Review submission no longer matches the recorded checkpoint')
-    if document('diff.json') != {'paths': paths, 'digest': fingerprint}:
-        raise Problem('Review diff does not match the submitted snapshot')
+    for name in ('delivery-selection.json', 'delivery-contract.json', 'submit-delivery.py'):
+        evidence(name)
+    delivery = selected_delivery(source)
+    submission_task = task | {'attempt': number, 'expected_digest': before.get('commit')}
+    packet = read_submission(delivery, submission_task)
+    if packet is None:
+        raise Problem('Review requires a complete agent submission packet')
+    fingerprint = packet['git']['commit']
+    expected = {'kind': 'git', 'branch': manifest['git']['branch'], 'commit': fingerprint}
+    if submitted != expected or fingerprint != task['expected_digest']:
+        raise Problem('Review submission no longer matches the recorded agent claim')
+    if before != expected | {'commit': packet['git']['base_commit']}:
+        raise Problem('Review submission base does not match the original handoff')
 
     def successful_pi(prefix=''):
         successful_process(prefix + 'pi', ('stdout.jsonl', 'stderr.txt'))
@@ -119,10 +107,6 @@ def checkpoint(store, task, sandbox, *, accepted=False):
 
     successful_pi()
     delivery = selected_delivery(source)
-    if (source / 'delivery-selection.json').exists():
-        evidence('delivery-selection.json')
-        evidence('delivery-contract.json')
-        evidence('submit-delivery.py')
     if delivery != source / 'delivery':
         if not entered_repair:
             raise Problem('No controller checkpoint proving delivery repair')
@@ -137,10 +121,12 @@ def checkpoint(store, task, sandbox, *, accepted=False):
     if validate_delivery(delivery, task['id'], task['round'], number) != 'awaiting_review':
         raise Problem('Pi completion identity/status does not match the review source')
     evidence(prefix + 'summary.md')
-    for check in manifest['checks']:
-        launch = successful_process('checks/' + check['name'], ('stdout.txt', 'stderr.txt'))
-        if launch.get('argv') != sandbox.wrap(check['argv'], manifest['workspace']) or launch.get('cwd') != manifest['workspace']:
-            raise Problem('Check command/cwd does not match the published manifest: ' + check['name'])
+    evidence(prefix + 'evidence.json')
+    # Freeze the actual published requirements and original prompt along with the
+    # protocol evidence. Project checks are rerun by Codex, never by this module.
+    evidence('../handoff.md')
+    evidence('../manifest.json')
+    evidence('worker-prompt.txt')
     result = {'source_attempt': number, 'source_round': task['round'],
               'submission_digest': fingerprint, 'files': files}
     if previous is not None and result != previous:

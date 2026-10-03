@@ -53,12 +53,12 @@ class CliTests(unittest.TestCase):
         engine.return_value.resume.assert_called_once_with('task', 3600, review_only=True, attempt_seconds=None)
         self.assertEqual(output.getvalue(), 'review_ready: task\n')
 
-    def test_resume_reports_integration_state_instead_of_new_implementation(self):
+    def test_resume_reports_review_state_instead_of_new_implementation(self):
         output = io.StringIO()
         with patch('codinator.cli.Store') as store, patch('codinator.cli.Engine'), contextlib.redirect_stdout(output):
-            store.return_value.get.return_value = {'state': 'integration_ready'}
+            store.return_value.get.return_value = {'state': 'review_ready'}
             self.assertEqual(main(['resume', 'task']), 0)
-        self.assertEqual(output.getvalue(), 'integration_ready: task\n')
+        self.assertEqual(output.getvalue(), 'review_ready: task\n')
 
     def test_resume_explicit_attempt_override(self):
         with patch('codinator.cli.Store'), patch('codinator.cli.Engine') as engine, contextlib.redirect_stdout(io.StringIO()):

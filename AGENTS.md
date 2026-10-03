@@ -1,15 +1,13 @@
 # Codinator working agreements
 
-- Codex is the only user interface. Task commands manage the background service; Pi implementation and independent Codex review are controller-owned stages.
-
-- Preserve task contracts and immutable attempt evidence. Never replay an uncertain prompt.
-- Only the controller writes workflow state. Only an independent Codex verdict can accept work.
-- New tasks use a dedicated Git branch in a normal checkout; worktrees are optional. Publish a clean, committed baseline with its full SHA. Run one writer per Git repository, including across state directories. Preserve unrelated work; never reset, stash or force-switch it away.
-- Version 2 publication authorizes task-local checkpoint commits by the controller after Pi stops, before checks/review, and when preserving interrupted in-scope work. These commits do not mean acceptance or authorize merging/pushing. The worker cannot stage, commit or write Git metadata. Freeze the candidate SHA and clean workspace during checks/review; rework stays on the task branch with existing budgets and rounds.
-- Use Git for source history and recovery; no new source snapshot/blob store for version 2. Fixed tracked Git ignore rules govern caches. Preserve old version 1 contracts, snapshots, blobs and budget history; only existing version 1 tasks retain their original execution/integration behavior. New publication requires version 2.
-- Merge/push requires separate explicit authorization. Version 2 ends on its task branch after independent acceptance; it does not use the legacy integration manifest. Existing version 1 integration verifies the exact accepted tree and promotes the same commit by fast-forward. Never expand a submitted allowlist or silently switch models.
-- No unsandboxed fallback. Inspect real subprocess exit, protocol completion, delivery and snapshot identity.
-- Changes to lifecycle, persistence or isolation require meaningful fault-injection tests and non-author review.
-- Mock/fake-agent tests are not real model connectivity evidence. Keep their results clearly separated.
-- Store credentials and raw task runtime outside this Git repository; never print authentication contents.
-- Keep the implementation small and standard-library based. Do not introduce distributed queues or UI frameworks without an actual need.
+- Codex is the user interface. Main Codex owns requirements, decomposition, handoffs and corrective guidance. Pi + Bonsai owns implementation, project commands, tests and task-local Git commits. Independent Codex owns verification and acceptance.
+- Codinator is the handoff protocol and transport: dispatch agents, carry immutable requirements/results, record process evidence and state, enforce budgets and serialize writers. It must not implement project work, run project tests, invoke Git, create source snapshots, clean caches, or merge/push. Only an independent Codex verdict can accept work; Pi test claims are not verified facts.
+- New tasks require a clean normal Git checkout on a dedicated branch, with full baseline SHA and frozen tracked handoff/ignore rules prepared by main Codex. Linked worktrees are not supported by the current relay protocol. One writer per checkout, including across state directories. Never overwrite unrelated work.
+- Pi uses standard Git to commit allowed changes before checks, reruns required checks on the final exact SHA, and submits attempt-bound Git/check evidence. Pi may write this checkout's Git metadata; it may not change branch, hooks/config/ignore rules, rewrite history, merge or push. Review and delivery repair keep source and Git read-only. Do not claim Git write protection for the implementation phase.
+- Independent Codex verifies real HEAD/branch/clean state, ancestry, each commit's scope, frozen contract, raw command evidence and required checks. The controller validates only protocol identities, formats and evidence integrity, and does not manufacture a project-check verdict.
+- Preserve task contracts and immutable attempt evidence. Never replay an uncertain prompt. On interruption, stop the process and preserve the scene; main Codex reconciles Git before explicit resume. Review-only retry reuses original evidence and requires Codex to verify the source and rerun checks.
+- Version 1 tasks are read-only history. Do not execute/resume them or rewrite their state, snapshots, blobs, verdicts, rounds or budgets. Prepare explicit successors using actual remaining budget and any original deadline; never silently reset allowances. Upgrade only after old active processes have stopped.
+- Only the controller writes workflow state. Merge/push requires separate explicit authorization and execution by Pi/Codex. No automatic integration stage.
+- No unsandboxed fallback. Inspect actual process exit and protocol completion. Keep models fixed by the contract; never silently switch them.
+- Changes to lifecycle, persistence or isolation require meaningful fault-injection tests and non-author review. Mock/fake-agent tests are not real model connectivity evidence.
+- Store credentials and raw runtime outside this repository; never print authentication contents. Keep the implementation small and standard-library based.

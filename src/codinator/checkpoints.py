@@ -7,7 +7,7 @@ import shlex
 import sys
 import time
 
-from .delivery import _directory, _encode, _json, _read, _write_once, validate_delivery
+from .delivery import _directory, _encode, _json, _read, _write_once, validate_delivery, read_submission
 from .files import Problem, file_info
 
 
@@ -103,7 +103,8 @@ def _resolution(directory, identity, number):
                 or delivery['directory'] != str(directory.parent / 'delivery')
                 or delivery['status'] not in ('awaiting_review', 'blocked')
                 or type(delivery['files']) is not dict
-                or set(delivery['files']) != {'summary.md', 'completion.json'}):
+                or set(delivery['files']) not in ({'summary.md', 'completion.json'},
+                                                 {'summary.md', 'completion.json', 'evidence.json'})):
             raise Problem('Invalid final-delivery checkpoint resolution')
     return value
 
@@ -137,6 +138,7 @@ def main(argv=None, *, contract_path):
 
 class Checkpoints:
     def __init__(self, task, context, interval):
+        self.task = task
         self.identity = _identity({'task_id': task['id'], 'round': task['round'], 'attempt': task['attempt']})
         self.interval = interval
         self.context = Path(context).absolute()
@@ -254,12 +256,17 @@ Do not restart the session, expand scope, change acceptance, or switch model.'''
             try:
                 disposition = validate_delivery(delivery, self.identity['task_id'],
                                                 self.identity['round'], self.identity['attempt'])
+                names = ['summary.md', 'completion.json']
+                if self.task.get('manifest', {}).get('version') == 2:
+                    packet = read_submission(delivery, self.task)
+                    if packet is not None:
+                        names.append('evidence.json')
             except (Problem, OSError, ValueError) as exc:
                 self._violate(self.number, 'missing_final_delivery', now, str(exc))
             else:
                 self._resolve(self.number, 'final_delivery', now, {
                     'directory': str(delivery), 'status': disposition,
-                    'files': {name: file_info(delivery / name) for name in ('summary.md', 'completion.json')}})
+                    'files': {name: file_info(delivery / name) for name in names}})
         self.enforce(now, set())
 
     def response(self, event):

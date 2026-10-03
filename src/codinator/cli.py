@@ -21,6 +21,8 @@ def notifications(store, codex_bin):
     """At-least-once delivery with a stable event ID; failure never rolls back acceptance."""
     with lock(store.root / 'notify.lock'):
         for row in store.db.execute('SELECT * FROM outbox WHERE delivered=0 AND thread IS NOT NULL').fetchall():
+            if store.get(row['task_id'])['manifest']['version'] != 2:
+                continue
             number = row['attempts'] + 1
             with store.db:
                 store.db.execute('UPDATE outbox SET attempts=? WHERE id=?', (number, row['id']))
@@ -126,7 +128,7 @@ def main(argv=None):
                     engine.recover()
                 while True:
                     for task in store.tasks():
-                        if task['state'] in ('ready', 'review_ready', 'needs_changes', 'integration_ready'):
+                        if task['manifest']['version'] == 2 and task['state'] in ('ready', 'review_ready', 'needs_changes'):
                             engine.run(task['id'])
                     notifications(store, args.codex_bin)
                     time.sleep(3)

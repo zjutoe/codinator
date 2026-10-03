@@ -107,6 +107,8 @@ class Store:
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             task = self.get(task_id)
+            if task['manifest']['version'] != 2:
+                raise Problem('Version 1 tasks are read-only history; use the old service to stop any old active process before upgrading')
             if task['state'] in ('accepted', 'cancelled'):
                 raise Problem('Task already terminal')
             if task['state'] in ('implementing', 'checking', 'reviewing', 'integrating'):

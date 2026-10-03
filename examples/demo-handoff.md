@@ -7,9 +7,11 @@ large integers. Use only the Python standard library and no I/O or global state.
 
 1. Inspect this contract and the existing workspace without changing frozen files.
 2. Implement the function and independent `unittest` cases for valid and invalid inputs.
-3. Run `python3 -m unittest discover -s tests -v` with bytecode writing disabled.
-4. Write the delivery summary and completion JSON at the paths assigned by Codinator.
+3. Commit the allowed implementation on the declared task branch, then run
+   `python3 -B -m unittest discover -s tests -v` against that exact SHA.
+4. Submit the summary, status and attempt-bound Git/check evidence through the assigned delivery tool.
 
 Acceptance: exact sums, strict type rejection, no unintended side effects, meaningful
 boundary tests, required check passes, and changes stay inside the manifest allowlist.
-Do not edit this contract, commit, stage, push, merge, or claim acceptance yourself.
+Only task-local commits are authorized. Do not edit this contract, switch branches,
+change Git configuration/ignore rules, push, merge, or claim acceptance yourself.

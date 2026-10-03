@@ -1,98 +1,60 @@
-"""Independent reviewer regressions: real Git and fake model processes only."""
-from pathlib import Path
-import threading
+"""Legacy history cannot trigger recovery, integration or hidden processes."""
 import unittest
 from unittest.mock import patch
 
-from codinator import integration
+import test_integration
+from codinator.cli import notifications
 from codinator.files import Problem
-from codinator.store import Store
-import test_integration as fixtures
 
 
-class IntegrationReviewTests(unittest.TestCase):
-    setUp = fixtures.IntegrationTests.setUp
+class LegacyRecoveryTests(unittest.TestCase):
+    setUp = test_integration.LegacyHistoryTests.setUp
+    legacy = test_integration.LegacyHistoryTests.legacy
 
-    def test_agent_promisor_config_never_executes_on_host(self):
-        original = integration.integrator
-        marker = self.base / 'host-command-executed'
-        wrapped = []
-        original_wrap = self.engine.sandbox.wrap
+    def test_active_legacy_refuses_recovery_without_stopping_or_changing_history(self):
+        self.legacy()
+        for state, pid in (('implementing', None), ('checking', None), ('reviewing', None),
+                           ('integrating', None), ('blocked', 123456), ('ready', 123456)):
+            with self.subTest(state=state, pid=pid):
+                self.store.update('legacy', state=state, pid=pid, pid_start='historical' if pid else None)
+                before = self.store.get('legacy')
+                with patch('codinator.engine.stop_group', side_effect=AssertionError('do not touch historical pid')), \
+                     patch('subprocess.Popen', side_effect=AssertionError('do not execute historical task')):
+                    with self.assertRaises(Problem):
+                        self.engine.recover()
+                self.assertEqual(self.store.get('legacy'), before)
 
-        def record_wrap(argv, root, *args, **kwargs):
-            if Path(root).name == 'repository' and argv[0] == 'git':
-                wrapped.append((argv, kwargs))
-            return original_wrap(argv, root, *args, **kwargs)
-
-        def malicious(task, attempt, *args, **kwargs):
-            original(task, attempt, *args, **kwargs)
-            clone = attempt / 'repository'
-            head = integration.text(clone, 'rev-parse', 'HEAD')
-            payload = clone / 'payload.sh'
-            payload.write_text('#!/bin/sh\ntouch ' + str(marker) + '\nexit 1\n')
-            payload.chmod(0o755)
-            integration.git(clone, 'config', 'remote.origin.url', 'ext::' + str(payload))
-            integration.git(clone, 'config', 'remote.origin.promisor', 'true')
-            integration.git(clone, 'config', 'protocol.ext.allow', 'always')
-            (clone / '.git/objects' / head[:2] / head[2:]).unlink()
-
-        with patch.object(self.engine.sandbox, 'wrap', side_effect=record_wrap), \
-             patch('codinator.integration.integrator', side_effect=malicious):
-            self.engine.run('test')
-        task = self.store.get('test')
-        self.assertEqual(task['state'], 'blocked', task['reason'])
-        self.assertFalse(marker.exists(), 'Agent-controlled transport executed outside its sandbox')
-        self.assertTrue(wrapped, 'Verification bypassed sandbox.wrap')
-        for argv, kwargs in wrapped:
-            self.assertEqual(kwargs.get('readonly'), [Path(argv[2])])
-            self.assertFalse(kwargs.get('writable'))
-        fixtures.IntegrationTests.target_unchanged(self)
-
-    def test_concurrent_cancel_survives_integration_failure_publication(self):
-        ready = threading.Event()
-        release = threading.Event()
-        attempting = threading.Event()
-        finished = threading.Event()
-        errors = []
-
-        def cancel():
-            other = None
-            try:
-                other = Store(self.store.root)
-                ready.set()
-                if not release.wait(30):
-                    raise AssertionError('Cancellation trigger timed out')
-                attempting.set()
-                other.request_control('test', 'cancel')
-            except BaseException as exc:
-                errors.append(exc)
-            finally:
-                if other is not None:
-                    other.db.close()
-                finished.set()
-
-        thread = threading.Thread(target=cancel, daemon=True)
-        thread.start()
-        self.assertTrue(ready.wait(5))
-        original = self.store.finish
-        observations = []
-
-        def racing_finish(task_id, message, **fields):
-            if fields.get('state') == 'blocked' and fields.get('phase') == 'integration':
-                release.set()
-                self.assertTrue(attempting.wait(5))
-                observations.append(finished.wait(0.5))
-            return original(task_id, message, **fields)
-
-        try:
-            with patch('codinator.integration.promote', side_effect=Problem('injected promotion failure')), \
-                 patch.object(self.store, 'finish', side_effect=racing_finish):
+    def test_active_legacy_blocks_current_dispatch_until_old_writer_is_reconciled(self):
+        self.legacy(state='integrating', pid=123456, pid_start='historical')
+        before = self.store.get('legacy')
+        with patch('codinator.engine.stop_group', side_effect=AssertionError('do not stop old protocol process')), \
+             patch('codinator.engine.worker', side_effect=AssertionError('old writer is still uncertain')):
+            with self.assertRaises(Problem):
                 self.engine.run('test')
-        finally:
-            release.set()
-            thread.join(5)
-        self.assertFalse(thread.is_alive())
-        self.assertFalse(errors, errors)
-        self.assertEqual(observations, [False], 'Control bypassed terminal-state transaction')
-        self.assertEqual(self.store.get('test')['state'], 'cancelled')
-        fixtures.IntegrationTests.target_unchanged(self)
+        self.assertEqual(self.store.get('test')['attempt'], 0)
+        self.assertEqual(self.store.get('legacy'), before)
+
+    def test_idle_legacy_is_untouched_and_does_not_prevent_current_dispatch(self):
+        self.legacy(state='paused')
+        before = self.store.get('legacy')
+        self.engine.run('test')
+        self.assertEqual(self.store.get('test')['state'], 'accepted', self.store.get('test')['reason'])
+        self.assertEqual(self.store.get('legacy'), before)
+
+    def test_legacy_control_and_notification_are_readonly(self):
+        self.legacy(state='blocked')
+        with self.store.db:
+            self.store.db.execute(
+                "INSERT INTO outbox(id,task_id,thread,message,delivered,attempts) VALUES(?,?,?,?,?,?)",
+                ('legacy:event', 'legacy', 'historical-target', 'old event', 0, 0))
+        before = self.store.get('legacy')
+        records = list(self.store.db.iterdump())
+        for action in ('pause', 'cancel'):
+            with self.subTest(action=action), self.assertRaises(Problem):
+                self.store.request_control('legacy', action)
+        with patch('subprocess.Popen', side_effect=AssertionError('do not replay historical notification')):
+            notifications(self.store, self.agent)
+        self.assertEqual(self.store.get('legacy'), before)
+        self.assertEqual(list(self.store.db.iterdump()), records)
+        event = self.store.db.execute('SELECT * FROM outbox WHERE task_id=?', ('legacy',)).fetchone()
+        self.assertEqual((event['delivered'], event['attempts']), (0, 0))

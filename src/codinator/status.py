@@ -20,7 +20,8 @@ def report(store, task):
     if task['manifest']['version'] == 2:
         result['git'] = {'branch': task['manifest']['git']['branch'],
                          'base_commit': task['manifest']['git']['base_commit'],
-                         'checkpoint_commit': task['expected_digest']}
+                         'checkpoint_commit': task['expected_digest'],
+                         'verification': 'independent_codex' if task['state'] == 'accepted' else 'agent_claim_or_published_baseline'}
     if 'checkpoint_seconds' in task['manifest']:
         result['checkpoint_seconds'] = task['manifest']['checkpoint_seconds']
         result['latest_checkpoint'] = None
@@ -51,6 +52,7 @@ def report(store, task):
         break
     result['next_action'] = (
         'none' if task['state'] in ('accepted', 'cancelled') else
+        'prepare_v2_successor_preserving_budget' if task['manifest']['version'] == 1 else
         'inspect_evidence_before_explicit_resume' if task['state'] in ('paused', 'blocked') else
         'ensure_service_running_then_monitor')
     return result

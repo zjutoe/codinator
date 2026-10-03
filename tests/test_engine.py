@@ -1,9 +1,8 @@
-from legacy_fixture import submit_legacy
+"""Relay lifecycle tests with agent-owned native Git/check subprocesses."""
 import json
 import os
 from pathlib import Path
 import shutil
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -11,152 +10,231 @@ import time
 import unittest
 from unittest.mock import patch
 
+from codinator.agents import reviewer as real_reviewer, worker as real_worker
 from codinator.cli import notifications
 from codinator.config import load_manifest
 from codinator.engine import Engine, _budget_timeout
-from codinator.agents import reviewer as real_reviewer, worker as real_worker
-from codinator.files import Problem, digest, snapshot, file_info
-from codinator.process import run_process as real_run_process
+from codinator.files import Problem, file_info
 from codinator.store import Store
 
 
 class FakeSandbox:
-    """Only for fake agents in tests; never selectable through the public CLI."""
-    def wrap(self, argv, *args, **kw):
+    def wrap(self, argv, root, allowed=(), writable=(), readonly=()):
         return argv
 
 
 class EngineTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.base = Path(self.temp.name)
+        for name in ("git", "task", "attempt", "events", "run_mode", "review_failure"):
+            if not hasattr(self, name):
+                setattr(self, name, getattr(EngineTests, name).__get__(self))
+        temporary = tempfile.TemporaryDirectory(prefix='relay-engine-', dir='/tmp')
+        self.addCleanup(temporary.cleanup)
+        self.base = Path(temporary.name)
         self.workspace = self.base / 'workspace'
         self.workspace.mkdir()
-        subprocess.run(['git', 'init', '-q', str(self.workspace)], check=True)
-        (self.workspace / 'handoff.md').write_text('Implement product.py with VALUE=42; tests mandatory.\n')
-        executable = self.base / 'agent'
+        self.git('init', '-q', '-b', 'main')
+        self.git('config', 'user.name', 'Fixture')
+        self.git('config', 'user.email', 'fixture@example.invalid')
+        (self.workspace / 'handoff.md').write_text('Implement product.py with VALUE=42; commit before tests.\n')
+        (self.workspace / '.gitignore').write_text('__pycache__/\n.pytest_cache/\n')
+        executable = self.workspace / 'fake-agent'
         shutil.copyfile(Path(__file__).parent / 'fake_agent.py', executable)
         executable.chmod(0o755)
         self.agent = str(executable)
+        self.git('add', '.')
+        self.git('commit', '-qm', 'Frozen fixture contract')
+        self.initial = self.git('rev-parse', 'HEAD')
+        self.git('switch', '-qc', 'task')
         self.store = Store(self.base / 'state')
         self.addCleanup(self.store.db.close)
         self.engine = Engine(self.store, sandbox=FakeSandbox(), pi_bin=self.agent, codex_bin=self.agent)
-        self.manifest = {'version': 1, 'id': 'test', 'workspace': str(self.workspace), 'handoff': 'handoff.md',
-                         'allowed_paths': ['product.py'], 'checks': [{'name': 'unit', 'argv': [sys.executable, '-c', 'from product import VALUE; assert VALUE == 42']}],
-                         'max_seconds': 120, 'attempt_seconds': 20}
-        path = self.base / 'task.json'
-        path.write_text(json.dumps(self.manifest))
-        self.manifest = load_manifest(path)
-        # Keep production Pi credentials completely out of these tests.
-        self.env = patch.dict(os.environ, {'PI_CODING_AGENT_DIR': str(self.base / 'empty-pi'),
-                                          'CODEX_HOME': str(self.base / 'empty-codex'), 'FAKE_MODE': 'accept'})
-        self.env.start()
-        self.addCleanup(self.env.stop)
-        submit_legacy(self.engine, self.manifest)
+        self.raw = {'version': 2, 'id': 'test', 'workspace': str(self.workspace), 'handoff': 'handoff.md',
+                    'git': {'branch': 'task', 'base_commit': self.initial},
+                    'allowed_paths': ['product.py'], 'checks': [{'name': 'unit', 'argv': [
+                        sys.executable, '-B', '-c',
+                        "import subprocess; from product import VALUE; assert VALUE == 42; "
+                        "assert not subprocess.check_output(['git','status','--porcelain']); "
+                        "print(subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip())"]}],
+                    'max_rounds': 2, 'max_seconds': 120, 'attempt_seconds': 20}
+        self.path = self.base / 'task.json'
+        self.path.write_text(json.dumps(self.raw))
+        self.manifest = load_manifest(self.path)
+        environment = patch.dict(os.environ, {'PI_CODING_AGENT_DIR': str(self.base / 'empty-pi'),
+                                             'CODEX_HOME': str(self.base / 'empty-codex'),
+                                             'FAKE_MODE': 'accept', 'PYTHONDONTWRITEBYTECODE': '1'})
+        environment.start()
+        self.addCleanup(environment.stop)
+        self.engine.submit(self.manifest)
 
-    def test_complete_acceptance_evidence_and_no_git_commit(self):
+    def git(self, *args):
+        return subprocess.check_output(['git', '-C', str(self.workspace), *args],
+                                       text=True, stderr=subprocess.PIPE).strip()
+
+    def task(self):
+        return self.store.get('test')
+
+    def attempt(self):
+        return self.engine.attempt_path(self.task())
+
+    def events(self, role, attempt=None):
+        path = (attempt or self.attempt()) / role / ('stdout.jsonl' if role == 'pi' else 'stdout.txt')
+        return [json.loads(line) for line in path.read_text().split('\n') if line.strip()]
+
+    def run_mode(self, mode):
+        os.environ['FAKE_MODE'] = mode
         self.engine.run('test')
-        task = self.store.get('test')
+        return self.task(), self.attempt()
+
+    def review_failure(self):
+        task, source = self.run_mode('codex-unavailable')
+        self.assertEqual((task['state'], task['phase']), ('blocked', 'stopped'), task['reason'])
+        self.assertTrue((source / 'delivery/evidence.json').is_file())
+        self.assertFalse((source / 'checks').exists())
+        return source
+
+    def test_pi_commits_before_tests_and_independent_codex_repeats_checks(self):
+        task, out = self.run_mode('accept')
         self.assertEqual(task['state'], 'accepted', task['reason'])
-        out = self.engine.attempt_path(task)
-        self.assertTrue((out / 'checks/unit/result.json').exists())
-        self.assertTrue((out / 'pi-runtime.json').exists())
-        self.assertTrue((out / 'submission.json').exists())
-        self.assertIsNone(snapshot(self.workspace, [])['git']['head'])
-        self.assertIn('--sandbox', json.loads((out / 'codex/launch.json').read_text())['argv'])
+        head = self.git('rev-parse', 'HEAD')
+        self.assertNotEqual(head, self.initial)
+        self.assertEqual(self.git('rev-parse', 'HEAD^'), self.initial)
+        self.assertEqual(self.git('rev-parse', 'main'), self.initial)
+        self.assertEqual(task['expected_digest'], head)
+        pi = self.events('pi')
+        committed = next(i for i, event in enumerate(pi) if event['type'] == 'fixture_commit')
+        checked = next(i for i, event in enumerate(pi) if event['type'] == 'fixture_check')
+        self.assertLess(committed, checked)
+        for role in ('pi', 'codex'):
+            checks = [e for e in self.events(role) if e['type'] == 'fixture_check']
+            self.assertEqual(len(checks), 1)
+            self.assertEqual((checks[0]['role'], checks[0]['commit'], checks[0]['exit_code']), (role, head, 0))
+        self.assertEqual(json.loads((out / 'before.json').read_text()),
+                         {'kind': 'git', 'branch': 'task', 'commit': self.initial})
+        self.assertEqual(json.loads((out / 'submission.json').read_text()),
+                         {'kind': 'git', 'branch': 'task', 'commit': head})
+        for name in ('checks', 'diff.json', 'git-submission-intent.json'):
+            self.assertFalse((out / name).exists(), name)
+        self.assertFalse((self.store.root / 'blobs').exists())
+
+    def test_controller_process_only_launches_agents_never_git_or_check_argv(self):
+        real_popen = subprocess.Popen
+        calls = []
+        def agent_only(argv, *args, **kwargs):
+            calls.append(argv)
+            self.assertEqual(argv[0], self.agent, f'Controller launched non-agent command: {argv}')
+            return real_popen(argv, *args, **kwargs)
+        with patch('subprocess.Popen', side_effect=agent_only):
+            # Publication also must not execute native Git or scan source.
+            self.engine.submit(self.manifest | {'id': 'second-publication'})
+            self.engine.run('test')
+        self.assertEqual(self.task()['state'], 'accepted', self.task()['reason'])
+        self.assertEqual(len(calls), 2)
+        self.assertIn('--mode', calls[0])
+        self.assertIn('--output-last-message', calls[1])
 
     def test_rework_is_automatic_and_preserves_prior_attempt(self):
-        os.environ['FAKE_MODE'] = 'rework'
-        self.engine.run('test')
-        task = self.store.get('test')
-        self.assertEqual(task['state'], 'accepted', task['reason'])
-        self.assertEqual((task['round'], task['attempt']), (2, 2))
-        first = self.store.root / 'tasks/test/attempt-0001/outcome.json'
-        self.assertEqual(json.loads(first.read_text())['verdict'], 'needs_changes')
+        task, out = self.run_mode('rework')
+        self.assertEqual((task['state'], task['round'], task['attempt']), ('accepted', 2, 2), task['reason'])
+        first = out.parent / 'attempt-0001'
+        self.assertEqual(json.loads((first / 'outcome.json').read_text())['verdict'], 'needs_changes')
+        first_commit = json.loads((first / 'submission.json').read_text())['commit']
+        self.assertEqual(json.loads((out / 'before.json').read_text())['commit'], first_commit)
+        self.assertEqual(json.loads((first / 'budget.json').read_text())['deadline'],
+                         json.loads((out / 'budget.json').read_text())['deadline'])
 
     def test_repeated_issue_ids_use_published_round_budget(self):
-        os.environ['FAKE_MODE'] = 'no-progress'
-        self.engine.run('test')
-        task = self.store.get('test')
-        self.assertEqual(task['state'], 'blocked')
-        self.assertEqual((task['round'], task['attempt']), (self.manifest['max_rounds'], self.manifest['max_rounds']))
+        task, _ = self.run_mode('no-progress')
+        self.assertEqual((task['state'], task['round'], task['attempt']), ('blocked', 2, 2))
         self.assertIn('round budget exhausted', task['reason'])
 
-    def test_scope_failure_never_reviews(self):
-        os.environ['FAKE_MODE'] = 'scope'
-        self.engine.run('test')
-        task = self.store.get('test')
+    def test_scope_truth_is_checked_by_reviewer_not_controller_source_scan(self):
+        task, out = self.run_mode('scope')
         self.assertEqual(task['state'], 'blocked')
-        self.assertIn('outside allowed', task['reason'])
-        self.assertFalse((self.engine.attempt_path(task) / 'codex').exists())
+        self.assertTrue((out / 'codex/result.json').exists())
+        self.assertIn('outside allowed scope', task['reason'])
+        self.assertTrue((self.workspace / 'forbidden').exists())
 
-    def test_truncated_or_missing_delivery_never_reviews(self):
-        for mode in ('truncated', 'missing-delivery', 'bad-completion-shape'):
+    def test_forged_sha_is_rejected_by_independent_git_verification(self):
+        task, out = self.run_mode('forged-sha')
+        self.assertEqual(task['state'], 'blocked')
+        self.assertTrue((out / 'codex/result.json').is_file())
+        self.assertIn('Candidate SHA', task['reason'])
+        self.assertFalse((out / 'checks').exists())
+
+    def test_claimed_pass_cannot_replace_independent_check(self):
+        task, out = self.run_mode('lie-checks')
+        self.assertEqual(task['state'], 'blocked')
+        packet = json.loads((out / 'delivery/evidence.json').read_text())
+        self.assertEqual(packet['checks'][0]['status'], 'passed')
+        self.assertIn('Independent published check failed', task['reason'])
+
+    def test_truncated_pi_never_reviews_or_creates_controller_commit(self):
+        task, out = self.run_mode('truncated')
+        self.assertEqual(task['state'], 'blocked')
+        self.assertFalse((out / 'codex').exists())
+        self.assertEqual(task['expected_digest'], self.initial)
+        self.assertNotEqual(self.git('rev-parse', 'HEAD'), self.initial)
+        self.assertFalse(list(out.glob('git-*')))
+
+    def test_uncommitted_blocked_work_is_preserved_without_guessing_sha(self):
+        task, out = self.run_mode('uncommitted')
+        self.assertEqual(task['state'], 'blocked')
+        self.assertEqual(task['expected_digest'], self.initial)
+        self.assertEqual(self.git('rev-parse', 'HEAD'), self.initial)
+        self.assertIn('VALUE', (self.workspace / 'product.py').read_text())
+        self.assertFalse((out / 'codex').exists())
+
+    def test_bad_review_protocol_or_digest_never_accepts(self):
+        for mode in ('stale-verdict', 'codex-exit-failure', 'codex-turn-failure', 'bad-review-shape'):
             with self.subTest(mode=mode):
-                os.environ['FAKE_MODE'] = mode
-                self.engine.run('test')
-                task = self.store.get('test')
+                task, _ = self.run_mode(mode)
                 self.assertEqual(task['state'], 'blocked')
-                self.assertFalse((self.engine.attempt_path(task) / 'codex').exists())
                 self.engine.resume('test')
 
-    def test_bad_review_exit_or_digest_or_concurrent_mutation_never_accepts(self):
-        for mode in ('stale-verdict', 'codex-exit-failure', 'codex-turn-failure', 'bad-review-shape', 'mutate-review'):
-            with self.subTest(mode=mode):
-                os.environ['FAKE_MODE'] = mode
-                self.engine.run('test')
-                task = self.store.get('test')
-                self.assertEqual(task['state'], 'blocked')
-                if mode != 'mutate-review':
-                    self.engine.resume('test')
-        with self.assertRaises(Problem):
-            self.engine.resume('test')
-
-    def test_failed_required_check_does_not_accept(self):
-        with patch('codinator.engine.run_process', side_effect=Problem('check failed')):
-            self.engine.run('test')
-        self.assertEqual(self.store.get('test')['state'], 'blocked')
-
     def test_pi_bypasses_proxy_and_codex_retains_it(self):
-        with patch.dict(os.environ, {'FAKE_MODE': 'proxy-routing', 'https_proxy': 'http://codex-proxy.invalid:8888',
-                                     'HTTP_PROXY': 'http://codex-proxy.invalid:8888', 'ALL_PROXY': 'socks5://invalid:1'}):
-            self.engine.run('test')
-        task = self.store.get('test')
+        with patch.dict(os.environ, {'https_proxy': 'http://codex-proxy.invalid:8888',
+                                    'HTTP_PROXY': 'http://invalid:1', 'ALL_PROXY': 'socks5://invalid:1'}):
+            task, _ = self.run_mode('proxy-routing')
         self.assertEqual(task['state'], 'accepted', task['reason'])
 
-    def test_codex_reconnection_diagnostic_then_terminal_success(self):
-        os.environ['FAKE_MODE'] = 'codex-reconnect'
-        self.engine.run('test')
-        task = self.store.get('test')
+    def test_reconnection_diagnostic_does_not_override_terminal_success(self):
+        task, _ = self.run_mode('codex-reconnect')
         self.assertEqual(task['state'], 'accepted', task['reason'])
 
     def test_pause_before_dispatch(self):
         self.store.update('test', control='pause')
         self.engine.run('test')
-        task = self.store.get('test')
-        self.assertEqual((task['state'], task['attempt']), ('paused', 0))
+        self.assertEqual((self.task()['state'], self.task()['attempt']), ('paused', 0))
 
-    def test_recovery_marks_uncertain_without_replaying(self):
+    def test_recover_does_not_replay_or_execute_git(self):
         self.store.update('test', state='implementing', attempt=1)
-        self.engine.recover()
-        task = self.store.get('test')
-        self.assertEqual(task['state'], 'blocked')
-        self.assertIn('uncertain', task['reason'])
-        self.assertFalse((self.workspace / 'product.py').exists())
+        with patch('subprocess.Popen', side_effect=AssertionError('recover must not launch a process')):
+            self.engine.recover()
+        self.assertEqual(self.task()['state'], 'blocked')
+        self.assertIn('interrupted', self.task()['reason'])
+        self.assertEqual(self.task()['expected_digest'], self.initial)
         self.engine.resume('test')
-        self.engine.run('test')
-        task = self.store.get('test')
-        self.assertEqual(task['state'], 'accepted', task['reason'])
-        self.assertEqual(task['attempt'], 2)
+        task, _ = self.run_mode('accept')
+        self.assertEqual((task['state'], task['attempt']), ('accepted', 2), task['reason'])
+
+    def test_unconfirmed_old_process_blocks_resume_and_dispatch(self):
+        self.store.update('test', state='implementing', pid=123456, pid_start='old')
+        with patch('codinator.engine.stop_group'), patch('codinator.engine.process_start', return_value='old'):
+            self.engine.recover()
+            for review_only in (False, True):
+                with self.assertRaises(Problem):
+                    self.engine.resume('test', review_only=review_only)
+            with self.assertRaises(Problem):
+                self.engine.run('test')
 
     def test_notification_failure_does_not_rollback_acceptance(self):
-        self.engine.run('test')
+        self.run_mode('accept')
         with self.store.db:
             self.store.db.execute("UPDATE outbox SET thread='explicit-user-authorized-target'")
         os.environ['FAKE_MODE'] = 'notify-fail'
         notifications(self.store, self.agent)
-        self.assertEqual(self.store.get('test')['state'], 'accepted')
+        self.assertEqual(self.task()['state'], 'accepted')
         row = self.store.db.execute('SELECT * FROM outbox').fetchone()
         self.assertEqual((row['delivered'], row['attempts']), (0, 1))
         os.environ['FAKE_MODE'] = 'accept'
@@ -164,108 +242,62 @@ class EngineTests(unittest.TestCase):
         row = self.store.db.execute('SELECT * FROM outbox').fetchone()
         self.assertEqual((row['delivered'], row['attempts']), (1, 2))
 
-    def test_terminal_state_and_outbox_are_atomic(self):
+    def test_terminal_state_and_notification_are_atomic(self):
         with patch.object(self.store, '_notify', side_effect=RuntimeError('simulated crash')):
             with self.assertRaises(RuntimeError):
                 self.store.finish('test', 'done', state='accepted')
-        self.assertEqual(self.store.get('test')['state'], 'ready')
+        self.assertEqual(self.task()['state'], 'ready')
         self.assertEqual(self.store.db.execute('SELECT count(*) FROM outbox').fetchone()[0], 0)
 
-    def test_recovery_does_not_adopt_review_mutations(self):
-        self.store.update('test', state='reviewing', attempt=1)
-        attempt = self.engine.attempt_path(self.store.get('test'))
-        attempt.mkdir()
-        (attempt / 'before.json').write_text(json.dumps(snapshot(self.workspace, [])))
-        (self.workspace / 'product.py').write_text('unauthorized concurrent change')
-        self.engine.recover()
-        with self.assertRaises(Problem):
-            self.engine.resume('test')
-
-    def test_unconfirmed_old_process_blocks_resume_and_dispatch(self):
-        self.store.update('test', state='implementing', pid=123456, pid_start='old')
-        with patch('codinator.engine.stop_group'), patch('codinator.engine.process_start', return_value='old'):
-            self.engine.recover()
-            self.assertEqual(self.store.get('test')['state'], 'blocked')
-            with self.assertRaises(Problem):
-                self.engine.resume('test')
-            with self.assertRaises(Problem):
-                self.engine.resume('test', review_only=True)
-            with self.assertRaises(Problem):
-                self.engine.run('test')
-
-    def review_failure(self):
-        os.environ['FAKE_MODE'] = 'codex-unavailable'
-        self.engine.run('test')
-        task = self.store.get('test')
-        self.assertEqual((task['state'], task['phase']), ('blocked', 'stopped'))
-        source = self.engine.attempt_path(task)
-        self.assertTrue((source / 'checks/unit/result.json').exists())
-        return source
-
-    def test_review_only_reuses_checked_submission_without_worker_or_checks(self):
+    def test_review_only_preserves_evidence_and_skips_implementation(self):
         source = self.review_failure()
-        old = {str(p.relative_to(source)): p.read_bytes() for p in source.rglob('*') if p.is_file()}
+        before = {p.relative_to(source): p.read_bytes() for p in source.rglob('*') if p.is_file()}
         self.engine.resume('test', review_only=True)
-        self.assertEqual(self.store.get('test')['state'], 'review_ready')
-        os.environ['FAKE_MODE'] = 'accept'
-        with patch('codinator.engine.worker', side_effect=AssertionError('Pi must not run')), \
-             patch('codinator.engine.run_process', side_effect=AssertionError('checks must not run')):
-            self.engine.run('test')
-        task = self.store.get('test')
+        with patch('codinator.engine.worker', side_effect=AssertionError('Pi must not replay')):
+            task, out = self.run_mode('accept')
         self.assertEqual((task['state'], task['round'], task['attempt']), ('accepted', 1, 2), task['reason'])
-        out = self.engine.attempt_path(task)
         self.assertFalse((out / 'pi').exists())
         self.assertFalse((out / 'checks').exists())
         self.assertEqual(json.loads((out / 'review-source.json').read_text())['source_attempt'], 1)
-        self.assertIn(str(source), (out / 'review-prompt.txt').read_text())
-        self.assertEqual(old, {str(p.relative_to(source)): p.read_bytes() for p in source.rglob('*') if p.is_file()})
+        self.assertEqual(before, {p.relative_to(source): p.read_bytes() for p in source.rglob('*') if p.is_file()})
+        self.assertEqual(len([e for e in self.events('codex') if e['type'] == 'fixture_check']), 1)
 
-    def test_review_only_survives_restart_and_repeated_transport_failure(self):
+    def test_review_only_survives_restart_and_transport_failures(self):
         self.review_failure()
         self.engine.resume('test', review_only=True)
-        # Queue survives a new Store/Engine, as in a service restart.
         reopened = Store(self.store.root)
         self.addCleanup(reopened.db.close)
-        restarted = Engine(reopened, sandbox=FakeSandbox(), pi_bin=self.agent, codex_bin=self.agent)
-        with patch('codinator.engine.worker', side_effect=AssertionError('Pi must not run')):
-            restarted.run('test')
-        task = self.store.get('test')
-        self.assertEqual((task['state'], task['round'], task['attempt']), ('blocked', 1, 2))
+        engine = Engine(reopened, sandbox=FakeSandbox(), pi_bin=self.agent, codex_bin=self.agent)
+        with patch('codinator.engine.worker', side_effect=AssertionError('must not replay')):
+            engine.run('test')
+        self.assertEqual((self.task()['state'], self.task()['attempt']), ('blocked', 2))
         self.engine.resume('test', review_only=True)
-        os.environ['FAKE_MODE'] = 'accept'
-        with patch('codinator.engine.worker', side_effect=AssertionError('Pi must not run')):
-            self.engine.run('test')
-        task = self.store.get('test')
+        task, out = self.run_mode('accept')
         self.assertEqual((task['state'], task['round'], task['attempt']), ('accepted', 1, 3), task['reason'])
-        self.assertEqual(json.loads((self.engine.attempt_path(task) / 'review-source.json').read_text())['source_attempt'], 1)
+        self.assertEqual(json.loads((out / 'review-source.json').read_text())['source_attempt'], 1)
 
-    def test_review_only_refuses_existing_verdict_even_without_outcome(self):
-        source = self.review_failure()
-        (source / 'review-delivery/verdict.json').write_text('{"verdict":"needs_changes"}')
-        with self.assertRaisesRegex(Problem, 'verdict|outcome'):
+    def test_review_only_refuses_existing_verdict(self):
+        self.review_failure()
+        (self.attempt() / 'review-delivery/verdict.json').write_text('{}')
+        with self.assertRaisesRegex(Problem, 'verdict/outcome'):
             self.engine.resume('test', review_only=True)
-        self.assertEqual(self.store.get('test')['state'], 'blocked')
 
-    def test_review_only_refuses_incomplete_or_changed_check_evidence(self):
+    def test_review_only_rejects_altered_packet_or_protocol(self):
         source = self.review_failure()
-        for name, replacement in [('checks/unit/result.json', b'{"exit_code":1}'),
-                                  ('checks/unit/stdout.txt', b'changed'),
-                                  ('checks/unit/launch.json', b'{"argv":["true"],"cwd":"wrong"}'),
-                                  ('delivery/completion.json', b'{"status":"blocked"}'),
-                                  ('delivery/completion.json', b'{"task_id":"test","round":true,"attempt":1,"status":"awaiting_review"}'),
-                                  ('pi/result.json', b'{"exit_code":0,"failure":"truncated"}')]:
+        for name, replacement in (('delivery/evidence.json', b'{}'),
+                                  ('delivery/summary.md', b'changed'),
+                                  ('submission.json', b'{}'), ('pi/result.json', b'{"exit_code":1}')):
             with self.subTest(name=name):
-                p = source / name
-                original = p.read_bytes()
-                p.write_bytes(replacement)
+                path = source / name
+                original = path.read_bytes()
+                path.write_bytes(replacement)
                 try:
                     with self.assertRaises(Problem):
                         self.engine.resume('test', review_only=True)
                 finally:
-                    p.write_bytes(original)
-        self.assertEqual(self.store.get('test')['state'], 'blocked')
+                    path.write_bytes(original)
 
-    def test_review_only_requires_complete_pi_protocol_not_just_zero_exit(self):
+    def test_review_only_requires_protocol_completion_not_zero_exit_alone(self):
         source = self.review_failure()
         events = source / 'pi/stdout.jsonl'
         events.write_text(events.read_text().replace('"stopReason": "stop"', '"stopReason": "length"'))
@@ -276,286 +308,99 @@ class EngineTests(unittest.TestCase):
         with self.assertRaisesRegex(Problem, 'completion protocol'):
             self.engine.resume('test', review_only=True)
 
-    def test_review_only_malformed_snapshot_blocks_without_service_crash(self):
-        source = self.review_failure()
-        p = source / 'before.json'
-        original = p.read_bytes()
-        snap = json.loads(original)
-        bad = ({}, snap | {'git': []}, snap | {'files': []},
-               snap | {'files': {'handoff.md': None}}, snap | {'root_mode': True})
-        for malformed in bad:
-            with self.subTest(snapshot=malformed):
-                # Reject it at both explicit resume and later queue dispatch.
-                p.write_text(json.dumps(malformed))
-                with self.assertRaisesRegex(Problem, 'snapshot evidence'):
-                    self.engine.resume('test', review_only=True)
-                p.write_bytes(original)
-                self.engine.resume('test', review_only=True)
-                p.write_text(json.dumps(malformed))
-                with patch('codinator.engine.reviewer', side_effect=AssertionError('review must not run')), \
-                     patch('codinator.engine.worker', side_effect=AssertionError('Pi must not run')):
-                    self.engine.run('test')
-                task = self.store.get('test')
-                self.assertEqual((task['state'], task['attempt']), ('blocked', 1))
-                self.assertIn('snapshot evidence', task['reason'])
-                p.write_bytes(original)
-
-    def test_review_only_rechecks_evidence_at_dispatch(self):
+    def test_review_only_rechecks_pinned_evidence_before_dispatch(self):
         source = self.review_failure()
         self.engine.resume('test', review_only=True)
         (source / 'delivery/summary.md').write_text('changed after enqueue')
-        with patch('codinator.engine.reviewer', side_effect=AssertionError('review must not run')), \
-             patch('codinator.engine.worker', side_effect=AssertionError('Pi must not run')):
+        with patch('codinator.engine.reviewer', side_effect=AssertionError('must not review')):
             self.engine.run('test')
-        self.assertEqual(self.store.get('test')['state'], 'blocked')
-        self.assertIn('selection_mismatch', self.store.get('test')['reason'])
+        self.assertEqual(self.task()['state'], 'blocked')
 
-    def test_review_only_rechecks_evidence_after_review(self):
-        source = self.review_failure()
-        self.engine.resume('test', review_only=True)
-        os.environ['FAKE_MODE'] = 'accept'
+    def test_review_only_git_drift_is_rejected_by_codex_not_resume_git_commands(self):
+        self.review_failure()
+        original = self.task()['expected_digest']
+        self.git('commit', '--allow-empty', '-qm', 'Unreviewed SHA with identical tree')
+        with patch('subprocess.Popen', side_effect=AssertionError('resume must not launch Git')):
+            self.engine.resume('test', review_only=True)
+        task, out = self.run_mode('accept')
+        self.assertEqual(task['state'], 'blocked')
+        self.assertEqual(task['expected_digest'], original)
+        self.assertIn('Candidate SHA', task['reason'])
+        self.assertTrue((out / 'codex/result.json').exists())
 
-        def mutate(*args, **kwargs):
-            result = real_reviewer(*args, **kwargs)
-            (source / 'delivery/summary.md').write_text('concurrent edit during review')
-            return result
+    def test_review_only_refuses_attempt_that_never_reached_review(self):
+        self.run_mode('truncated')
+        with self.assertRaises(Problem):
+            self.engine.resume('test', review_only=True)
 
-        with patch('codinator.engine.reviewer', side_effect=mutate):
-            self.engine.run('test')
-        self.assertEqual(self.store.get('test')['state'], 'blocked')
-        self.assertIn('selection_mismatch', self.store.get('test')['reason'])
-
-    def test_review_only_needs_changes_returns_to_normal_implementation(self):
+    def test_review_only_needs_changes_returns_to_implementation(self):
         self.review_failure()
         self.engine.resume('test', review_only=True)
-
         def review(*args, **kwargs):
             os.environ['FAKE_MODE'] = 'no-progress' if args[1].name == 'attempt-0002' else 'accept'
             return real_reviewer(*args, **kwargs)
-
-        with patch('codinator.engine.worker', wraps=real_worker) as worker_calls, \
+        with patch('codinator.engine.worker', wraps=real_worker) as workers, \
              patch('codinator.engine.reviewer', side_effect=review):
             self.engine.run('test')
-        task = self.store.get('test')
-        self.assertEqual((task['state'], task['round'], task['attempt']), ('accepted', 2, 3), task['reason'])
-        self.assertIsNone(task['review_resume'])
-        self.assertEqual(worker_calls.call_count, 1)
-        self.assertIn('Need a boundary case', worker_calls.call_args.args[0]['feedback'])
-        self.assertTrue((self.engine.attempt_path(task) / 'checks/unit/result.json').exists())
+        self.assertEqual((self.task()['state'], self.task()['round'], self.task()['attempt']),
+                         ('accepted', 2, 3), self.task()['reason'])
+        self.assertEqual(workers.call_count, 1)
 
-    def test_review_only_recover_crash_after_attempt_allocation(self):
-        self.review_failure()
-        self.engine.resume('test', review_only=True)
-        # Simulate death between the atomic state update and attempt files.
-        self.store.update('test', attempt=2, state='reviewing', phase='codex')
-        self.engine.recover()
-        task = self.store.get('test')
-        self.assertEqual(task['state'], 'blocked')
-        self.assertEqual(task['review_resume']['source_attempt'], 1)
-        self.assertFalse(self.engine.attempt_path(task).exists())
-        self.engine.resume('test', review_only=True)
-        os.environ['FAKE_MODE'] = 'accept'
-        with patch('codinator.engine.worker', side_effect=AssertionError('Pi must not run')):
-            self.engine.run('test')
-        self.assertEqual(self.store.get('test')['state'], 'accepted')
-
-    def test_review_only_recovery_rejects_workspace_drift(self):
-        self.review_failure()
-        self.engine.resume('test', review_only=True)
-        self.store.update('test', attempt=2, state='reviewing', phase='codex')
-        (self.workspace / 'product.py').write_text('VALUE = -1\n')
-        self.engine.recover()
-        with self.assertRaisesRegex(Problem, 'checkpoint'):
-            self.engine.resume('test', review_only=True)
-        self.assertEqual(self.store.get('test')['state'], 'blocked')
-
-    def test_review_only_expired_budget_does_not_launch_and_extension_allows_review(self):
-        self.review_failure()
-        self.store.update('test', deadline=time.time() - 1)
-        self.engine.resume('test', review_only=True)
-        with patch('codinator.engine.reviewer', side_effect=AssertionError('budget exhausted')):
-            self.engine.run('test')
-        self.assertIn('budget exhausted', self.store.get('test')['reason'])
-        self.engine.resume('test', review_only=True, extra_seconds=60)
-        os.environ['FAKE_MODE'] = 'accept'
-        self.engine.run('test')
-        self.assertEqual(self.store.get('test')['state'], 'accepted')
-
-    def test_review_only_refuses_attempt_that_never_reached_review(self):
-        os.environ['FAKE_MODE'] = 'truncated'
-        self.engine.run('test')
-        with self.assertRaisesRegex(Problem, 'reached review'):
-            self.engine.resume('test', review_only=True)
-
-    def test_review_only_refuses_missing_checks_and_outcomes(self):
-        source = self.review_failure()
-        p = source / 'checks/unit/result.json'
-        original = p.read_bytes()
-        p.unlink()
-        with self.assertRaisesRegex(Problem, 'Missing'):
-            self.engine.resume('test', review_only=True)
-        p.write_bytes(original)
-        (source / 'outcome.json').write_text('{"verdict":"blocked"}')
-        with self.assertRaisesRegex(Problem, 'verdict/outcome'):
-            self.engine.resume('test', review_only=True)
-
-    def test_review_only_mounts_original_and_current_evidence(self):
-        source = self.review_failure()
-        self.engine.resume('test', review_only=True)
-        os.environ['FAKE_MODE'] = 'accept'
-        with patch.object(self.engine.sandbox, 'wrap', wraps=self.engine.sandbox.wrap) as calls:
-            self.engine.run('test')
-        reviewer_call = [c for c in calls.call_args_list if 'readonly' in c.kwargs][0]
-        self.assertEqual(reviewer_call.kwargs['readonly'], [self.engine.attempt_path(self.store.get('test')), source])
-
-    def test_old_database_migration_preserves_legacy_task_and_checks(self):
-        source = self.review_failure()
-        self.store.db.close()
-        # Recreate the precise pre-feature schema while keeping real old records.
-        db = sqlite3.connect(self.store.root / 'state.sqlite')
-        db.execute('ALTER TABLE tasks DROP COLUMN review_resume')
-        db.execute('ALTER TABLE tasks DROP COLUMN attempt_seconds_override')
-        db.commit()
-        db.close()
-        self.store = Store(self.store.root)
-        self.addCleanup(self.store.db.close)
-        self.engine.store = self.store
-        self.assertIsNone(self.store.get('test')['review_resume'])
-        self.assertIsNone(self.store.get('test')['attempt_seconds_override'])
-        self.assertEqual(self.store.get('test')['manifest']['attempt_seconds'], 20)
-        self.engine.resume('test', review_only=True)
-        os.environ['FAKE_MODE'] = 'accept'
-        self.engine.run('test')
-        self.assertEqual(self.store.get('test')['state'], 'accepted')
-        self.assertTrue((source / 'checks/unit/result.json').exists())
-
-    def test_new_default_budget_preserves_explicit_old_budget(self):
-        path = self.base / 'default-task.json'
-        raw = dict(self.manifest)
-        del raw['attempt_seconds']
-        path.write_text(json.dumps(raw))
-        self.assertEqual(load_manifest(path)['attempt_seconds'], 7200)
-        raw['attempt_seconds'] = 3600
-        path.write_text(json.dumps(raw))
-        self.assertEqual(load_manifest(path)['attempt_seconds'], 3600)
-
-    def test_invalid_resume_budget_does_not_recover_or_mutate(self):
-        before = self.store.get('test')
-        count = self.store.db.execute('SELECT count(*) FROM events').fetchone()[0]
-        with patch.object(self.engine, 'recover', side_effect=AssertionError('must validate first')):
+    def test_invalid_budget_does_not_recover_or_mutate(self):
+        before = self.task()
+        with patch.object(self.engine, 'recover', side_effect=AssertionError('validate first')):
             for value in (0, -1, True, 1.5, '7200'):
                 with self.subTest(value=value), self.assertRaises(Problem):
                     self.engine.resume('test', attempt_seconds=value)
             for value in (-1, True, '60'):
                 with self.subTest(extra=value), self.assertRaises(Problem):
                     self.engine.resume('test', extra_seconds=value)
-        self.assertEqual(self.store.get('test'), before)
-        self.assertEqual(self.store.db.execute('SELECT count(*) FROM events').fetchone()[0], count)
+        self.assertEqual(self.task(), before)
 
-    def test_real_timeout_then_resume_preserves_manifest_and_old_evidence(self):
-        # Start with a one-second authorized override so the fake sleeping
-        # process exercises actual timeout/termination without a long test.
+    def test_timeout_resume_preserves_old_evidence_and_manifest(self):
         self.store.update('test', state='paused')
         self.engine.resume('test', attempt_seconds=1)
-        os.environ['FAKE_MODE'] = 'sleep'
-        self.engine.run('test')
-        task = self.store.get('test')
+        task, source = self.run_mode('sleep')
         self.assertEqual(task['state'], 'blocked')
         self.assertIn('wall-clock', task['reason'])
-        source = self.engine.attempt_path(task)
-        old_files = {p: p.read_bytes() for p in source.rglob('*') if p.is_file()}
-        manifest_file = source.parent / 'manifest.json'
-        original_manifest = manifest_file.read_bytes()
-        self.engine.resume('test', attempt_seconds=7200, extra_seconds=14400)
-        queued = self.store.get('test')
-        self.assertEqual(queued['manifest']['attempt_seconds'], 20)
-        self.assertEqual(queued['attempt_seconds_override'], 7200)
-        self.assertIn('each Pi/Codex process <= 7200 seconds', queued['feedback'])
-        self.assertIn(str(queued['deadline']), queued['feedback'])
-        events = [json.loads(r[0]) for r in self.store.db.execute('SELECT payload FROM events WHERE kind=?', ('state',))]
-        self.assertTrue(any(e.get('attempt_seconds_override') == 7200 and e.get('state') == 'ready' for e in events))
-        os.environ['FAKE_MODE'] = 'accept'
-        with patch('codinator.engine.worker', wraps=real_worker) as workers, \
-             patch('codinator.engine.reviewer', wraps=real_reviewer) as reviews, \
-             patch('codinator.engine.run_process', wraps=real_run_process) as checks:
-            self.engine.run('test')
-        task = self.store.get('test')
-        self.assertEqual((task['state'], task['attempt']), ('accepted', 2), task['reason'])
-        self.assertEqual(workers.call_args.args[4]['timeout'], 7200)
-        self.assertEqual(reviews.call_args.args[3]['timeout'], 7200)
-        self.assertEqual(checks.call_args.kwargs['timeout'], self.manifest['checks'][0]['timeout_seconds'])
-        budget = json.loads((self.engine.attempt_path(task) / 'budget.json').read_text())
-        self.assertEqual(budget['attempt_seconds'], 7200)
-        self.assertEqual(budget['manifest_attempt_seconds'], 20)
-        self.assertEqual(budget['source'], 'resume_override')
-        self.assertEqual(manifest_file.read_bytes(), original_manifest)
-        self.assertTrue(all(p.read_bytes() == data for p, data in old_files.items()))
-
-    def test_override_persists_after_restart_and_rework(self):
-        self.store.update('test', state='paused')
-        self.engine.resume('test', attempt_seconds=7200, extra_seconds=14400)
-        self.store.db.close()
-        self.store = Store(self.store.root)
-        self.addCleanup(self.store.db.close)
-        self.engine.store = self.store
-        self.store.update('test', state='paused')
-        self.engine.resume('test')  # Omission retains the explicit override.
-        os.environ['FAKE_MODE'] = 'rework'
+        old = {p: p.read_bytes() for p in source.rglob('*') if p.is_file()}
+        manifest = (source.parent / 'manifest.json').read_bytes()
+        self.engine.resume('test', attempt_seconds=30, extra_seconds=120)
         with patch('codinator.engine.worker', wraps=real_worker) as workers, \
              patch('codinator.engine.reviewer', wraps=real_reviewer) as reviews:
-            self.engine.run('test')
-        self.assertEqual(self.store.get('test')['state'], 'accepted')
-        self.assertEqual([c.args[4]['timeout'] for c in workers.call_args_list], [7200, 7200])
-        self.assertEqual([c.args[3]['timeout'] for c in reviews.call_args_list], [7200, 7200])
+            task, out = self.run_mode('accept')
+        self.assertEqual((task['state'], task['attempt']), ('accepted', 2), task['reason'])
+        self.assertEqual(workers.call_args.args[4]['timeout'], 30)
+        self.assertEqual(reviews.call_args.args[3]['timeout'], 30)
+        self.assertEqual(task['manifest']['attempt_seconds'], 20)
+        self.assertEqual(task['attempt_seconds_override'], 30)
+        self.assertEqual((source.parent / 'manifest.json').read_bytes(), manifest)
+        self.assertTrue(all(p.read_bytes() == data for p, data in old.items()))
+        self.assertFalse((out / 'checks').exists())
 
-    def test_override_still_caps_both_agents_by_total_deadline(self):
-        self.store.update('test', state='paused', deadline=time.time() + 30)
-        self.engine.resume('test', attempt_seconds=7200)
+    def test_override_caps_agents_by_shared_deadline(self):
+        self.store.update('test', state='paused', deadline=time.time() + 10)
+        self.engine.resume('test', attempt_seconds=100)
         with patch('codinator.engine.worker', wraps=real_worker) as workers, \
-             patch('codinator.engine.reviewer', wraps=real_reviewer) as reviews, \
-             patch('codinator.engine.run_process', wraps=real_run_process) as checks:
-            self.engine.run('test')
-        self.assertEqual(self.store.get('test')['state'], 'accepted')
+             patch('codinator.engine.reviewer', wraps=real_reviewer) as reviews:
+            task, _ = self.run_mode('accept')
+        self.assertEqual(task['state'], 'accepted', task['reason'])
         for timeout in (workers.call_args.args[4]['timeout'], reviews.call_args.args[3]['timeout']):
             self.assertGreater(timeout, 0)
-            self.assertLessEqual(timeout, 30)
-        self.assertLessEqual(checks.call_args.kwargs['timeout'], self.manifest['checks'][0]['timeout_seconds'])
-        self.assertLessEqual(checks.call_args.kwargs['timeout'], 30)
+            self.assertLessEqual(timeout, 10)
 
-    def test_deadline_expiry_between_worker_and_checks_never_launches_next_process(self):
-        original_timeout = _budget_timeout
+    def test_deadline_after_pi_never_launches_reviewer(self):
         calls = 0
         def after_pi(deadline, limit):
             nonlocal calls
             calls += 1
-            if calls >= 2:
-                with patch('codinator.engine.time.time', return_value=deadline):
-                    return original_timeout(deadline, limit)
-            return original_timeout(deadline, limit)
+            if calls >= 3:
+                raise Problem('Task wall-clock budget exhausted')
+            return _budget_timeout(deadline, limit)
         with patch('codinator.engine._budget_timeout', side_effect=after_pi), \
-             patch('codinator.engine.run_process', side_effect=AssertionError('expired check launched')), \
              patch('codinator.engine.reviewer', side_effect=AssertionError('expired review launched')):
-            self.engine.run('test')
-        task = self.store.get('test')
-        self.assertEqual((task['state'], task['round'], task['attempt']), ('blocked', 1, 1))
-        self.assertFalse((self.engine.attempt_path(task) / 'outcome.json').exists())
-        self.assertFalse((self.engine.attempt_path(task) / 'checks').exists())
-
-    def test_review_only_override_keeps_eligibility_gate_and_skips_pi(self):
-        source = self.review_failure()
-        self.engine.resume('test', review_only=True, attempt_seconds=7200, extra_seconds=14400)
-        os.environ['FAKE_MODE'] = 'accept'
-        with patch('codinator.engine.worker', side_effect=AssertionError('Pi must not run')), \
-             patch('codinator.engine.reviewer', wraps=real_reviewer) as reviews:
-            self.engine.run('test')
-        self.assertEqual(self.store.get('test')['state'], 'accepted')
-        self.assertEqual(reviews.call_args.args[3]['timeout'], 7200)
-        self.assertTrue((source / 'checks/unit/result.json').exists())
-
-    def test_failed_checkpoint_does_not_change_override_or_deadline(self):
-        self.review_failure()
-        before = self.store.get('test')
-        (self.workspace / 'product.py').write_text('unexpected edit\n')
-        with self.assertRaisesRegex(Problem, 'checkpoint'):
-            self.engine.resume('test', review_only=True, attempt_seconds=7200, extra_seconds=14400)
-        self.assertEqual(self.store.get('test'), before)
+            task, out = self.run_mode('accept')
+        self.assertEqual(task['state'], 'blocked')
+        self.assertTrue((out / 'delivery/evidence.json').exists())
+        self.assertFalse((out / 'codex').exists())
+        self.assertFalse((out / 'checks').exists())

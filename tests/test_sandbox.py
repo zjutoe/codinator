@@ -1,44 +1,15 @@
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
 
-from codinator.agents import worker
-from codinator.delivery import validate_delivery
 from codinator.files import Problem
 from codinator.sandbox import Sandbox
 
 
 class SandboxTests(unittest.TestCase):
-    def test_worker_bound_helper_is_visible_with_state_under_tmp(self):
-        with tempfile.TemporaryDirectory() as name:
-            root = Path(name)
-            workspace = root / 'workspace'
-            workspace.mkdir()
-            (workspace / 'handoff.md').write_text('Implement product.py VALUE=42.\n')
-            executable = workspace / 'fake-pi'
-            shutil.copyfile(Path(__file__).with_name('fake_agent.py'), executable)
-            executable.chmod(0o755)
-            attempt = root / 'state/attempt-0001'
-            attempt.mkdir(parents=True)
-            private = root / 'private'
-            private.mkdir()
-            task = {'id': 'tmp-state', 'round': 1, 'attempt': 1, 'feedback': '',
-                    'manifest': {'version': 1, 'id': 'tmp-state', 'workspace': str(workspace),
-                                 'handoff': 'handoff.md', 'allowed_paths': ['product.py'], 'checks': []}}
-            # Use a real bwrap boundary with a fake model, never copy host credentials.
-            with patch.dict(os.environ, {'PI_CODING_AGENT_DIR': str(root / 'empty-pi'),
-                                         'FAKE_MODE': 'accept'}):
-                worker(task, attempt, private, Sandbox(), {'timeout': 15},
-                       pi_bin=str(executable))
-            self.assertEqual(validate_delivery(attempt / 'delivery', 'tmp-state', 1, 1),
-                             'awaiting_review')
-            self.assertEqual((workspace / 'product.py').read_text(), 'VALUE = 42\n')
-
     def test_writable_hardlink_is_rejected_before_launch(self):
         with tempfile.TemporaryDirectory() as name:
             root = Path(name)
