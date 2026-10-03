@@ -113,6 +113,21 @@ class GitEngineTests(unittest.TestCase):
         self.engine.submit(load_manifest(self.path))
         self.assertEqual(self.store.get('directory-scope')['state'], 'ready')
 
+    def test_git_pathspec_syntax_cannot_alias_a_tracked_handoff(self):
+        (self.workspace / '.gitignore').write_text(':*\n')
+        self.git('add', '.gitignore')
+        self.git('commit', '-qm', 'Ignore colon-named fixture files')
+        base = self.git('rev-parse', 'HEAD')
+        for number, name in enumerate((':(top)handoff.md', ':(literal)handoff.md')):
+            with self.subTest(name=name):
+                (self.workspace / name).write_text('Ignored untracked contract\n')
+                raw = self.raw | {'id': f'pathspec-{number}', 'handoff': name,
+                                  'git': self.raw['git'] | {'base_commit': base}}
+                self.path.write_text(json.dumps(raw))
+                with self.assertRaises(Problem):
+                    self.engine.submit(load_manifest(self.path))
+                self.assertFalse((self.store.root / 'tasks' / raw['id']).exists())
+
     def test_commit_precedes_checks_and_review_without_source_blobs(self):
         with (patch('codinator.engine.snapshot', side_effect=AssertionError('v2 must not snapshot')),
               patch('codinator.engine.preserve', side_effect=AssertionError('v2 must not preserve blobs'))):

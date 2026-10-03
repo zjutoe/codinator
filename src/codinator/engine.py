@@ -59,7 +59,7 @@ class Engine:
             before = git_source.preflight(manifest)
             # The live handoff must be part of the pinned commit, even if an
             # untracked copy could otherwise disappear behind ignore rules.
-            git_source.git(root, 'ls-files', '--error-unmatch', '--', manifest['handoff'])
+            git_source.git(root, '--literal-pathspecs', 'ls-files', '--error-unmatch', '--', manifest['handoff'])
             ignored = git_source.git(root, 'check-ignore', '--stdin', '-z',
                                      data=b'\0'.join(p.encode() for p in manifest['allowed_paths']) + b'\0',
                                      ok_returncodes=(0, 1))

@@ -177,7 +177,7 @@ class CheckpointTests(unittest.TestCase):
         self.protocol.tick(102, self.events.append)
         task = self.task | {'state': 'implementing', 'phase': 'pi', 'reason': '', 'control': None,
             'deadline': 1000, 'attempt_seconds_override': None, 'pid': None, 'pid_start': None,
-            'manifest': {'workspace': str(self.root), 'attempt_seconds': 5400, 'checkpoint_seconds': 1800}}
+            'manifest': {'version': 1, 'workspace': str(self.root), 'attempt_seconds': 5400, 'checkpoint_seconds': 1800}}
         before = sorted(str(p.relative_to(self.root)) for p in self.root.rglob('*'))
         value = report(SimpleNamespace(root=self.root), task)
         progress = value['latest_checkpoint']
