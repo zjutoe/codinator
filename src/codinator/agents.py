@@ -446,8 +446,18 @@ def _codex_result(task, attempt_dir, private, sandbox, process_options, codex_bi
     result_file = delivery / ('verdict.json' if reviewing else 'guidance.json')
     config = codex_home(private / ('codex' if reviewing else 'guidance-codex'))
     write_json(schema, result_schema)
+    if enabled(task['manifest']):
+        prompt += (f'\nBefore returning JSON, check that its summary string follows the frozen {phase} '
+                   'template: exact level-2 Markdown headings (##), each once with a nonempty body '
+                   'and actual line breaks. Plain labels such as Subject: are not Markdown headings. '
+                   'Do not omit sections for a blocked result; use None where appropriate.\n')
     (attempt_dir / f'{phase}-prompt.txt').write_text(prompt)
-    argv = [codex_bin, "-a", "never", "exec", "--ignore-user-config", "--sandbox", "read-only",
+    # Preserve read-only source access in both layers; grant only /tmp for scratch.
+    argv = [codex_bin, "-a", "never", "exec", "--ignore-user-config",
+            "-c", 'default_permissions="codinator_review"',
+            "-c", 'permissions.codinator_review.extends=":read-only"',
+            "-c", 'permissions.codinator_review.filesystem={"/tmp"="write"}',
+            "-c", 'permissions.codinator_review.network.enabled=false',
             "-m", "gpt-6-astra", "-c", 'model_reasoning_effort="xhigh"', "--json",
             "--output-schema", str(schema), "--output-last-message", str(result_file), prompt]
     readonly = [attempt_dir.parent]

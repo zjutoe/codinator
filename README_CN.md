@@ -26,6 +26,9 @@ systemctl --user enable --now codinator.service
 实施固定为 `bonsai / bonsai2-27b / xhigh`，独立验收为 `gpt-6-astra / xhigh`，不静默更换模型。
 Pi 的客户端身份由 RPC 核验，不能证明远端服务实际加载的权重。
 
+指导与审查要求 Codex 支持命名权限配置：继承 `:read-only`，仅授予 `/tmp` 写入以支持
+fixture 和日志；外层 bubblewrap 保持源码、Git 与原始证据只读，不使用无沙箱回退。
+
 ## 发布与管理
 
 主 Codex 准备普通 Git checkout 的独立任务分支，提交 handoff、固定忽略规则与基线，并确认干净状态。

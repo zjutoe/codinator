@@ -41,6 +41,10 @@ Implementation is fixed to `bonsai / bonsai2-27b / xhigh`; guidance and independ
 review use `gpt-6-astra / xhigh`. These choices are currently fixed in the implementation.
 Pi RPC attests client configuration, not the weights loaded by the remote server.
 
+Guidance and review require Codex named permission profiles. Their profile extends
+`:read-only` and grants only `/tmp` writes for fixtures and logs; the outer bubblewrap
+sandbox keeps source, Git and original evidence read-only. No unsandboxed fallback is used.
+
 For an existing editable installation, restart `codinator.service` after updating
 code so the running process loads it. Confirm all agents have stopped before upgrading.
 Keep the existing unit's state directory, executable paths and environment; use that

@@ -194,6 +194,14 @@ class GuidanceEngineTests(unittest.TestCase):
             task, final = self.run_mode()
         self.assertEqual((task['state'], task['round'], task['attempt']), ('accepted', 2, 2), task['reason'])
         self.assertEqual(len(launched), 4)
+        for argv in (launched[1], launched[3]):
+            overrides = [argv[i + 1] for i, arg in enumerate(argv) if arg == '-c']
+            self.assertNotIn('--sandbox', argv)
+            self.assertIn('default_permissions="codinator_review"', overrides)
+            self.assertIn('permissions.codinator_review.extends=":read-only"', overrides)
+            self.assertIn('permissions.codinator_review.filesystem={"/tmp"="write"}', overrides)
+            self.assertIn('permissions.codinator_review.network.enabled=false', overrides)
+            self.assertIn('exact level-2 Markdown headings (##)', argv[-1])
         first = self.source()
         help_packet = json.loads((first / 'delivery/evidence.json').read_text())
         help_completion = json.loads((first / 'delivery/completion.json').read_text())
