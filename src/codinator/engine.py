@@ -57,6 +57,14 @@ class Engine:
             raise Problem("Task artifacts already exist; choose a new task id")
         with lock(_repo_lock(manifest)):
             before = git_source.preflight(manifest)
+            # The live handoff must be part of the pinned commit, even if an
+            # untracked copy could otherwise disappear behind ignore rules.
+            git_source.git(root, 'ls-files', '--error-unmatch', '--', manifest['handoff'])
+            ignored = git_source.git(root, 'check-ignore', '--stdin', '-z',
+                                     data=b'\0'.join(p.encode() for p in manifest['allowed_paths']) + b'\0',
+                                     ok_returncodes=(0, 1))
+            if ignored:
+                raise Problem('Allowed paths must not be ignored by fixed Git rules')
             task_dir.mkdir(parents=True)
             write_json(task_dir / 'manifest.json', manifest)
             write_json(task_dir / 'intake.json', before)

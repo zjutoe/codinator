@@ -90,6 +90,29 @@ class GitEngineTests(unittest.TestCase):
                 with self.assertRaises(Problem):
                     load_manifest(self.path)
 
+    def test_ignored_untracked_handoff_and_allowed_file_cannot_be_published(self):
+        (self.workspace / '.gitignore').write_text('__pycache__/\n.pytest_cache/\nprivate-handoff.md\nhidden.py\n')
+        self.git('add', '.gitignore')
+        self.git('commit', '-qm', 'Fixed fixture ignore rules')
+        (self.workspace / 'private-handoff.md').write_text('Uncommitted contract\n')
+        for name, change in [('hidden-contract', {'handoff': 'private-handoff.md'}),
+                             ('hidden-product', {'allowed_paths': ['hidden.py']})]:
+            with self.subTest(name=name):
+                raw = self.raw | change | {'id': name, 'git': self.raw['git'] | {'base_commit': self.git('rev-parse', 'HEAD')}}
+                self.path.write_text(json.dumps(raw))
+                with self.assertRaises(Problem):
+                    self.engine.submit(load_manifest(self.path))
+                self.assertFalse((self.store.root / 'tasks' / name).exists())
+
+    def test_allowed_directory_can_contain_fixed_ignored_caches(self):
+        (self.workspace / 'src').mkdir()
+        (self.workspace / 'src/__pycache__').mkdir()
+        (self.workspace / 'src/__pycache__/fixture.pyc').write_bytes(b'cache')
+        raw = self.raw | {'id': 'directory-scope', 'allowed_paths': ['src/']}
+        self.path.write_text(json.dumps(raw))
+        self.engine.submit(load_manifest(self.path))
+        self.assertEqual(self.store.get('directory-scope')['state'], 'ready')
+
     def test_commit_precedes_checks_and_review_without_source_blobs(self):
         with (patch('codinator.engine.snapshot', side_effect=AssertionError('v2 must not snapshot')),
               patch('codinator.engine.preserve', side_effect=AssertionError('v2 must not preserve blobs'))):
