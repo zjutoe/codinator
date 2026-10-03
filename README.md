@@ -11,6 +11,13 @@ local Git commits. Independent Codex verifies the work and decides acceptance.
 It dispatches agents, transports immutable requirements and results, preserves process
 evidence, manages state and budgets, and serializes writers.
 
+Source versions are Git commits, identified by exact SHAs. Pi/Codex perform Git
+operations; Codinator records their declared identities and independent verdicts.
+The controller does not create a separate source snapshot store. Document structure,
+control fields and evidence integrity are controller responsibilities; whether the
+content is true, useful or satisfies the task is the responsibility of its authors
+and receiving agents.
+
 ## Setup
 
 Linux, one user, serial tasks. Python 3.11+, authenticated `pi` and `codex`, `git`, and
@@ -30,8 +37,15 @@ systemctl --user enable --now codinator.service
 `service` prints a unit; it does not install or restart it. Upgrade only after old
 agent processes have stopped. Generated units preserve PATH and proxy settings.
 Pi removes proxy variables and connects directly; Codex review/notifications retain them.
-Implementation is fixed to `bonsai / bonsai2-27b / xhigh`, review to `gpt-6-astra / xhigh`.
+Implementation is fixed to `bonsai / bonsai2-27b / xhigh`; guidance and independent
+review use `gpt-6-astra / xhigh`. These choices are currently fixed in the implementation.
 Pi RPC attests client configuration, not the weights loaded by the remote server.
+
+For an existing editable installation, restart `codinator.service` after updating
+code so the running process loads it. Confirm all agents have stopped before upgrading.
+Keep the existing unit's state directory, executable paths and environment; use that
+same state directory for publication and status commands. Restarting the service does
+not resume paused/blocked tasks or make v1 history executable.
 
 ## Publication and execution
 
@@ -50,19 +64,206 @@ codinator --state-dir /absolute/state cancel TASK_ID
 
 `submit` authorizes dispatch. `status` is read-only and starts no agent. The background
 `serve` process owns execution; do not run competing writers or edit workflow databases.
-Both agents read the controller's immutable copy of the published handoff.
+Implementation, guidance and review agents read the controller's immutable published handoff.
 The publication SHA is a publisher assertion, verified against real Git by Pi/Codex.
 
 New v2 tasks can opt into `"handoff_protocol": 1`; existing manifests keep their
-published behavior. Retrieve the five document templates with `codinator template
-handoff`, `summary`, `help`, `review`, or `guidance`. This command does not open
-workflow state or call a model. Templates contain fixed Markdown sections and role
-instructions. The controller validates headings, nonempty bodies, control types and
-identity bindings only. Vague text and explicit `无`/`未执行`/`None` markers can pass
-format validation; authors and receiving agents must judge content quality and truth.
-Original contracts, template versions/bytes and dispatched prompts are preserved.
+published behavior. The document rules below describe this opt-in protocol. Existing
+tasks must follow their frozen contracts; new rules do not rewrite old requirements.
 See [the protocol example](examples/handoff-task.json) and
 [its handoff](examples/protocol-handoff.md).
+
+## Agent document contract
+
+Start from the corresponding shipped template, which includes both required sections
+and instructions for its author:
+
+```bash
+codinator template handoff
+codinator template summary
+codinator template help
+codinator template review
+codinator template guidance
+```
+
+These commands print templates without opening workflow state or calling a model.
+For a dispatched task, use the exact template frozen with that task, provided in its
+prompt/evidence directory. Do not substitute a later installed template. Publication
+preserves the original manifest, handoff, template bytes/version/hashes; each dispatch
+preserves the templates used and the actual prompt.
+
+### Common format and author obligations
+
+Use UTF-8 Markdown. Each required heading below must appear exactly once as a level-2
+heading (`##`), with the exact English spelling and case, and a non-whitespace body.
+Body text may be in English, Chinese or another language. Follow the template order
+for readability; order is not enforced. Extra sections and nested headings are allowed.
+Headings inside fenced code blocks do not satisfy required sections. Missing, empty
+or duplicated required sections are format errors.
+
+Use `None`, `无` or `未执行` when appropriate instead of leaving a section empty or
+inventing facts. These markers and structurally complete vague text can pass format
+validation. **Format receipt does not establish content quality, factual truth or acceptance.**
+The author must check clarity, truth and consistency with the declared control result;
+the receiving Codex/Pi must assess whether the content is sufficient for its next action.
+Separate observations, agent claims, inferences, unperformed actions and unknowns.
+Reference actual artifacts and raw command/tool evidence, not just another summary.
+
+Declare routing through the bound status/result fields, not prose alone. A `Status`
+or `Verdict` section should agree with that declaration, but Codinator does not read
+the body to infer a disposition. Documents and feedback cannot expand permissions,
+change acceptance criteria, extend budgets or authorize replay of uncertain operations.
+Leave frozen requirements and previous evidence intact; append linked responses through
+the supplied tools/schema and never edit workflow databases.
+
+### Handoff — main Codex
+
+Main Codex writes the tracked file named by `manifest.handoff` before publication.
+Fill these sections from the [handoff template](src/codinator/templates/handoff.md):
+
+| Required heading | Author must provide |
+| --- | --- |
+| `## Goal` | Concrete problem and expected outcome. |
+| `## Scope and constraints` | Allowed changes, exclusions, existing authority, isolation and budget boundaries. |
+| `## Required inputs` | Context, dependencies and stable references; `None` if inapplicable. |
+| `## Deliverables` | Expected artifacts, destinations and how the recipient locates them. |
+| `## Acceptance criteria` | Independently verifiable conditions; stable identifiers where useful. |
+| `## Handoff rules` | When to deliver, ask for help or stop; required input, submission mechanism and next handler. |
+
+Before publishing, main Codex checks that this content is sufficient to execute and
+resolves missing information that would block implementation. Commit the handoff and
+fixed ignore rules in the baseline. A complete set of headings does not establish an
+executable contract. Explain later guidance in a new linked reply; do not overwrite
+the published handoff. Scope/authority/acceptance changes require explicit authorization
+and an appropriate new contract.
+
+### Summary — Pi + Bonsai
+
+Pi writes the [summary template](src/codinator/templates/summary.md) for final delivery
+or an explicit stop, and reuses it for checkpoint stage summaries:
+
+| Required heading | Author must provide |
+| --- | --- |
+| `## Status` | Task/round/attempt or checkpoint identity and declared disposition. |
+| `## Completed` | Work actually completed and its practical result. |
+| `## Incomplete` | Outstanding requirements, or `None`. |
+| `## Attempts and results` | Actual attempts and observed outcomes; mark unperformed work. |
+| `## Artifacts and evidence` | Artifact locations, exact candidate SHA and raw check/tool evidence. |
+| `## Deviations and unknowns` | Deviations, unresolved facts and verification limits, or `None`. |
+| `## Next step` | Proposed action, responsible recipient and required input. |
+
+Pi must not claim independent acceptance. Record every required check honestly against
+the candidate: exact argv, commit, status, exit code and original evidence reference.
+Unperformed checks use `not_run` and `exit_code: null`, with an honest explanation.
+Do not invent a candidate or successful check to fill the format.
+
+A stage summary identifies its checkpoint and is not final delivery. New-protocol
+progress JSON has exactly `completed`, `checks`, `blockers`, `next_step`,
+`needs_guidance` and `summary`; `summary` contains the Markdown above. Use the bound
+progress command from the checkpoint prompt. Arrays may be empty when nothing was
+completed; only actually completed checks belong in `checks`. A progress receipt
+does not complete the attempt or prove its claims.
+
+### Help request — Pi + Bonsai
+
+Use the [help template](src/codinator/templates/help.md): all seven summary headings,
+plus these two required sections:
+
+| Required heading | Author must provide |
+| --- | --- |
+| `## Blocker` | Specific impediment and how it relates to the original contract. |
+| `## Question for Codex` | Concrete question whose answer would enable progress within existing authority. |
+
+Include actual attempted solutions, observed results, remaining work and evidence.
+Submit `needs_guidance` through the bound delivery command with the help document
+passed as `--summary`, plus a normal candidate/check evidence packet. Leave clean,
+committed partial work; checks not yet performed remain `not_run`/null. Then stop so
+the controller can confirm process/protocol completion before dispatching guidance.
+For an external/authority need, an unreconciled candidate or insufficient evidence,
+submit `blocked` and explain what main Codex must resolve. It does not trigger automatic
+guidance. Never repeat an operation whose outcome is unknown to produce a nicer summary.
+
+### Review — independent Codex
+
+A non-author Codex reviews the exact candidate under the original contract. Its JSON
+`summary` follows the [review template](src/codinator/templates/review.md):
+
+| Required heading | Author must provide |
+| --- | --- |
+| `## Subject` | Original contract, delivery, attempt and exact candidate SHA. |
+| `## Verdict` | Independently determined result matching the JSON `verdict`. |
+| `## Basis and verification` | Acceptance criteria checked, actual artifacts/raw evidence and check results; verified facts, inferences and unverified portions. |
+| `## Rework` | Concrete problems, their basis, correction guidance and re-verification, or `None`. |
+| `## Stop reason` | For a blocker, who must supply what information, authority or resource; otherwise `None`. |
+
+Treat Pi's summary and evidence packet as claims. Verify actual HEAD/branch/clean state,
+ancestry, every commit's scope, frozen handoff/ignore rules and raw tool evidence,
+including commit-before-check ordering; independently run all required checks on the
+exact SHA and recheck source identity afterward. Passing tests alone does not establish
+compliance. See [the Git protocol](docs/git-checkpoints.md) for safe Git command rules.
+
+Return only the dispatch schema's JSON: `task_id`, `submission_digest`, `verdict`,
+`summary`, `issues` and, for protocol 1, the supplied `message` binding. `verdict` is
+`accepted`, `needs_changes` or `blocked`. `accepted` requires no unresolved issues;
+`needs_changes` requires actionable issues. Each issue has nonempty string fields
+`id`, `priority`, `path`, `description`, `required_change` and `validation`, with a
+unique stable ID. Explain the original requirement behind each finding; retain IDs
+across rounds and do not invent new acceptance criteria. Source/Git stay read-only.
+The CLI writes `review-delivery/verdict.json`; Codinator records the outcome and
+renders `review.md`. Do not manually publish a controller outcome or acceptance.
+
+### Guidance — Codex guide
+
+A separate read-only Codex answers the linked help request. Its JSON `summary` follows
+the [guidance template](src/codinator/templates/guidance.md):
+
+| Required heading | Author must provide |
+| --- | --- |
+| `## Question` | Linked request, attempt, original contract and specific question answered. |
+| `## Advice` | Actionable continuation steps within original scope and authority. |
+| `## Basis` | Supporting evidence, verified candidate state and relevant counterexamples. |
+| `## Unknowns` | Unresolved facts and limits, or `None`. |
+| `## Next boundary` | When to continue, ask again or stop; responsible handler and required input. |
+
+Before recommending continuation, verify actual candidate SHA, branch, clean state,
+baseline/attempt-start ancestry, commit scope and frozen contract; recheck HEAD/branch/
+clean state before returning. Answer the actual question and keep unknowns explicit.
+Do not edit source/Git, implement a correction, alter requirements or permissions,
+extend budgets or accept the implementation. A later non-author Codex performs final review.
+
+Return only the dispatch schema's JSON: `task_id`, `submission_digest`, `result`,
+`summary` and the supplied `message` binding. `result` is `continue` or `blocked`.
+The CLI writes `guidance-delivery/guidance.json`. `continue` sends the linked advice
+to a fresh Pi attempt; `blocked` stops and identifies the needed main-Codex/external input.
+Explain the disposition in the body; Codinator routes using the explicit field only.
+
+### Bound submission and correction
+
+Pi uses the exact submission command supplied in its dispatch, for example:
+
+```text
+BOUND_DELIVERY_COMMAND --summary /tmp/summary.md --status awaiting_review --evidence /tmp/evidence.json
+BOUND_DELIVERY_COMMAND --summary /tmp/help.md --status needs_guidance --evidence /tmp/evidence.json
+BOUND_DELIVERY_COMMAND --summary /tmp/stopped.md --status blocked
+```
+
+`BOUND_DELIVERY_COMMAND` is a placeholder for the supplied command, not a standalone
+CLI subcommand. Normal/help deliveries require an evidence packet; blocked delivery
+may omit it. Help is stored as the delivery's `summary.md`, not a separate `help.md`.
+The bound receiver publishes `summary.md`, `completion.json` and any `evidence.json`
+at the contract's destination. Do not handwrite `completion.json` or choose another
+delivery directory. Correct its specific format errors in the original session before
+stopping; a successful receipt still requests guidance/review rather than acceptance.
+
+For protocol 1, message identity fields are `version`, `task_id`, `round`, `attempt`,
+`message_id`, `kind`, `reply_to`, `contract_digest`, `submission_digest`, `author`
+and `recipient`. Pi's tool fills them; Codex must return the exact binding supplied
+by its schema/prompt. Do not choose a new reply target, author or contract identity.
+Malformed JSON, duplicate keys, stale/conflicting bindings and changed selected evidence
+are rejected. Identical Pi resubmission is idempotent; conflicting content cannot replace
+an earlier delivery. Codex replies are not automatically replayed after uncertainty.
+
+## Task lifecycle and acceptance
 
 ```text
 ready → implementing (Pi: Git + implementation + tests) → reviewing (Codex) → accepted
@@ -91,8 +292,8 @@ For protocol-1 tasks, Pi may submit `needs_guidance` with the help-template summ
 and a normal evidence packet identifying clean, committed partial work; unperformed
 checks use `not_run`/null. A separate Codex guide verifies the declared Git state in
 a read-only sandbox and returns `continue` or `blocked`. `continue` starts a fresh Pi
-attempt with linked guidance under the original contract. Each Pi dispatch consumes
-one implementation round; guidance/review consume the same deadline without adding
+attempt with linked guidance under the original contract. Each implementation dispatch
+consumes one round; guidance/review consume the same deadline without adding
 another implementation round. Only a later independent reviewer can accept work.
 `blocked` stops for main Codex or an external condition. Routing uses explicit fields,
 never an interpretation of the document body. Process uncertainty or a malformed guide
@@ -106,20 +307,26 @@ and rework share the total; paused time counts. Pi/Codex must respect each check
 the controller enforces the overall model-process hard limit.
 
 `checkpoint_seconds: 1800` and `attempt_seconds: 5400` request Pi progress every 30 minutes
-within a 90-minute process cap. RPC steer does not restart the session. A valid report is
-due within five minutes; missing reports or `needs_guidance=true` block at a boundary with
-no active tool, still subject to the hard deadline. Healthy reports permit continued work.
-Main Codex supplies guidance; the controller does not generate a plan or diagnosis.
+within a 90-minute process cap. RPC steer does not restart the session. Reports are due
+within five minutes; healthy reports allow continued work, while missing/invalid reports
+block at a boundary without active tools, still subject to the hard deadline.
 
-With protocol 1, progress reports also carry a structured-section summary, retained as
-a stage summary with a hash binding. `needs_guidance=true` requests a final help packet
-and graceful stop within at most the existing five-minute grace and original hard limit.
-Missing final help blocks automatic continuation. Once near the hard limit, the controller
-steers Pi to close out within `min(300 seconds, half the effective process timeout)`;
-it never extends the deadline. Status distinguishes final submission, latest stage summary,
-and missing final summary, including attempts without checkpoints. Raw process exit and
-protocol completion are recorded separately from agent claims. Paused/resumed protocol-1
-implementation also consumes a new round; review-only retains its original round/evidence.
+| Contract | Explicit checkpoint `needs_guidance=true` |
+| --- | --- |
+| Existing v2 without protocol 1 | Stop for main Codex guidance; no automatic guide dispatch. |
+| Protocol 1 | Request a final help packet and graceful stop within at most five minutes and the original hard limit; only confirmed completion and valid delivery allow guide dispatch. |
+
+Protocol-1 progress summaries are retained as stage summaries with hash bindings.
+Closeout is requested once with `min(300 seconds, half the effective process timeout)`
+remaining; it never extends the deadline. Status exposes `current_handler`,
+`pending_reply_to`, final submission, latest stage summary and missing final summary,
+including attempts without checkpoints. Raw `process_exit_code` and
+`protocol_completed` are distinct from agent claims and task acceptance.
+
+For protocol 1, each published implementation dispatch consumes a round, including
+a startup failure or interrupted dispatch. Pausing/resuming an already queued but
+undispatched round does not consume another round. Guidance/review do not add
+implementation rounds; review-only retains the original round/evidence.
 
 On interruption, the controller stops the process and preserves the scene. It does not
 commit source, adopt an unknown HEAD, clean caches, or replay an uncertain prompt.
@@ -151,6 +358,11 @@ Writable binds reject symlinks, hard-linked files and unreadable directories bef
 including Git metadata. Main Codex must prepare an ordinary non-shared Git directory;
 the controller never silently copies or detaches objects. There is no unsandboxed fallback.
 
+Existing Git HEAD, config, hooks and packed-refs are remounted read-only during Pi
+implementation. Ordinary commits can still write index, objects and task refs.
+Independent Codex compares other refs against the initial Pi `git show-ref` tool
+evidence; not all Git metadata is protected from writes by the operating system.
+
 Locks use the ordinary `.git/` directory path across state roots. They do not stop a host
 process with the same UID from bypassing the controller. Follow the single-writer rule.
 Version 2 rejects legacy `excludes` and `integration`; acceptance never authorizes merge/push.
@@ -178,17 +390,9 @@ PYTHONPATH=src python3 -B -m unittest discover -s tests -v
 
 Tests use isolated fake agents and local Git fixtures, not real models or research data.
 Historical real-model evidence under [validation](validation/README.md) does not attest
-that the new protocol has been exercised with real models.
+that the new protocol has been exercised with real models. A bounded real-agent pilot
+is described in the interface documentation: preserve a comparison baseline and record
+reply delivery, manual intervention reasons, format-error time/rounds, repeated blockers
+and stop evidence. Report unperformed real-agent validation explicitly.
 See the Chinese [interface](docs/codex-interface.md) and [Git protocol](docs/git-checkpoints.md)
 for operational details.
-
-These tests exercise fake agents and real local Git/bubblewrap boundaries. They do not
-attest the new loop's real model connectivity. A bounded real-agent pilot is described
-in the interface documentation. Preserve a baseline and record reply delivery, manual
-intervention reasons, format-error time/rounds, repeated blockers and stop evidence.
-Upgrade a running service only after its agents stop; restart with the new code before
-publishing protocol-1 tasks. Source changes alone do not upgrade an already running service.
-
-Existing Git HEAD, config, hooks and packed-refs are remounted read-only during Pi implementation.
-Ordinary commits can still write index, objects and task refs. Other refs are compared by independent
-Codex against the initial Pi `git show-ref` tool evidence; not all Git metadata is OS-write-protected.
