@@ -4,6 +4,8 @@ Codinator 为主 Codex、Pi + Bonsai 和独立 Codex 提供任务交接协议与
 主 Codex 负责需求、拆解、handoff 和纠偏；Pi 负责实施、Git 提交与测试；独立 Codex 负责验证和验收。
 **Codinator 不实施业务任务，不运行项目测试，不调用 Git。** 它派发模型进程，传递原始要求和反馈，保存交接证据，控制状态、预算和串行执行。
 
+后续功能范围与实施顺序见 [交接协议与任务推进改造计划](docs/handoff-review-refactor-plan.md)（设计计划，尚未实施）。
+
 ## 环境与安装
 
 Linux、单用户、串行任务；Python 3.11+，已认证的 `pi`、`codex`，以及 `git`、`bwrap`。Python 运行时无第三方依赖。
