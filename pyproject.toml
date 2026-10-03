@@ -14,3 +14,6 @@ codinator = "codinator.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+codinator = ["templates/*.md"]

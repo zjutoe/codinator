@@ -3,15 +3,17 @@ import os
 from pathlib import Path
 import time
 
-from .checkpoints import Checkpoints
-from .files import Problem, write_json
-from .delivery import prepare_contract, selected_delivery
+from .checkpoints import Checkpoints, Closeout
+from .files import Problem, file_info, write_json
+from .delivery import (prepare_contract, selected_delivery, message_binding, protocol_binding,
+                       validate_message, _read, _json, DeliveryError)
+from .handoff import enabled, protocol_template, validate_document, verify_protocol
 from .process import run_process
 from .sandbox import codex_home, pi_home
 
 
 class PiProtocol:
-    def __init__(self, prompt, state_path, *, checkpoints=None):
+    def __init__(self, prompt, state_path, *, checkpoints=None, closeout=None):
         self.prompt = prompt
         self.state_path = state_path
         self.pending = "state"
@@ -21,17 +23,22 @@ class PiProtocol:
         self.final_reason = None
         self.final_error = None
         self.checkpoints = checkpoints
+        self.closeout = closeout
         self.active = False
         self.active_tools = set()
 
     def start(self, send):
         if self.checkpoints:
             self.checkpoints.start(time.monotonic())
+        if self.closeout:
+            self.closeout.start(time.monotonic())
         send({"id": "state", "type": "get_state"})
 
     def observe(self, now):
         if self.checkpoints:
             self.checkpoints.observe(now)
+        if self.closeout:
+            self.closeout.observe(now)
 
     def tick(self, now, send, *, safe_boundary=True):
         self.observe(now)
@@ -41,10 +48,15 @@ class PiProtocol:
                 and self.checkpoints.violation is None
                 and self.final_reason not in ('stop', 'error', 'aborted', 'length')):
             self.checkpoints.tick(now, send)
+        if (self.closeout and self.prompt_sent and self.ack and self.active and not self.settled
+                and self.final_reason not in ('stop', 'error', 'aborted', 'length')):
+            self.closeout.tick(now, send)
 
     def event(self, event, send):
         kind = event.get("type")
         if kind == 'response' and self.checkpoints and self.checkpoints.response(event):
+            return False
+        if kind == 'response' and self.closeout and self.closeout.response(event):
             return False
         if kind == "message_end" and type(event.get("message")) is not dict:
             raise Problem("Pi message_end.message must be an object")
@@ -78,7 +90,7 @@ class PiProtocol:
             raise Problem("Pi requested interactive input; task requires human attention")
         elif kind == "extension_error":
             raise Problem("Pi extension error; inspect events")
-        elif kind in ('tool_execution_start', 'tool_execution_end') and self.checkpoints:
+        elif kind in ('tool_execution_start', 'tool_execution_end'):
             tool_id = event.get('toolCallId')
             if type(tool_id) is not str or not tool_id:
                 raise Problem('Missing Pi tool execution identity')
@@ -110,21 +122,25 @@ class PiProtocol:
             raise Problem('Pi completion still has active tools')
         if self.checkpoints:
             self.checkpoints.finish(time.monotonic())
+        if self.closeout:
+            self.closeout.finish(time.monotonic())
 
 
-def _delivery_instructions(context, submit):
+def _delivery_instructions(context, submit, *, help_allowed=False):
+    statuses = ('--status awaiting_review, --status needs_guidance or --status blocked'
+                if help_allowed else '--status awaiting_review\nor --status blocked')
     return f"""Codinator delivery rules (remain authoritative after context compaction):
 Delivery contract: {context / 'delivery-contract.json'}
 Bound submission command: {submit}
 Before finishing, reread this read-only contract, write an honest summary in /tmp,
-then invoke the bound command with --summary /tmp/summary.md --status awaiting_review
-or --status blocked. The tool supplies task identity and destination; never handwrite
+then invoke the bound command with --summary /tmp/summary.md {statuses}.
+The tool supplies task identity and destination; never handwrite
 completion.json or create workspace delivery/. A submitted receipt is not acceptance.
 """
 
 
 def _pi_worker(prompt, context, private, sandbox, process_options, root, *,
-               delivery_instructions, allowed=(), readonly=(), checkpoints=None, git_write=False, pi_bin="pi"):
+               delivery_instructions, allowed=(), readonly=(), checkpoints=None, closeout=None, git_write=False, pi_bin="pi"):
     config = pi_home(private / "pi")
     (context / "worker-prompt.txt").write_text(prompt)
     argv = [pi_bin, "--mode", "rpc", "--provider", "bonsai", "--model", "bonsai2-27b", "--thinking", "xhigh",
@@ -142,7 +158,21 @@ def _pi_worker(prompt, context, private, sandbox, process_options, root, *,
         writable.append(checkpoints.directory / 'reports')
     run_process(sandbox.wrap(argv, root, allowed, writable, readonly=readonly),
                 cwd=root, env=env, out=context / "pi",
-                protocol=PiProtocol(prompt, context / "pi-runtime.json", checkpoints=checkpoints), **process_options)
+                protocol=PiProtocol(prompt, context / "pi-runtime.json", checkpoints=checkpoints,
+                                    closeout=closeout), **process_options)
+
+
+def _document_instructions(task, context, task_dir, kinds, author):
+    if not enabled(task['manifest']):
+        return ''
+    record = verify_protocol(task_dir, task['manifest'])
+    write_json(context / f'{author}-templates.json', {
+        'version': 1, 'contract_digest': record['contract_digest'],
+        'templates': {kind: record['templates'][kind] for kind in kinds}})
+    text = '\nThe controller checks structure and binding only; you own content judgment.\n'
+    for kind in kinds:
+        text += f'\nFrozen {kind} template and role instructions:\n{protocol_template(task_dir, kind)}\n'
+    return text
 
 
 def worker(task, attempt_dir, private, sandbox, process_options, pi_bin="pi"):
@@ -150,8 +180,8 @@ def worker(task, attempt_dir, private, sandbox, process_options, pi_bin="pi"):
     root = Path(manifest["workspace"])
     delivery = attempt_dir / "delivery"
     delivery.mkdir()
-    submit = prepare_contract(task, attempt_dir, delivery)
-    instructions = _delivery_instructions(attempt_dir, submit)
+    submit = prepare_contract(task, attempt_dir, delivery, task_dir=attempt_dir.parent)
+    instructions = _delivery_instructions(attempt_dir, submit, help_allowed=enabled(manifest))
     if manifest['version'] == 2:
         instructions += f"""Git task branch: {manifest['git']['branch']}; starting commit: {task['expected_digest']}.
 Published baseline: {manifest['git']['base_commit']}; tracked handoff path: {manifest['handoff']}.
@@ -180,17 +210,38 @@ For blocked work use --status blocked; do not invent a commit or test result to 
 """
     checkpoints = None
     if 'checkpoint_seconds' in manifest:
-        checkpoints = Checkpoints(task, attempt_dir, manifest['checkpoint_seconds'])
+        checkpoints = Checkpoints(task, attempt_dir, manifest['checkpoint_seconds'],
+                                  timeout=process_options['timeout'])
         instructions += (f'Soft checkpoints every {manifest["checkpoint_seconds"]} seconds use RPC steer.\n'
                          f'Checkpoint contract: {attempt_dir / "checkpoint-contract.json"}\n'
                          f'Bound progress command: {checkpoints.command}\n'
                          'Each request requires a valid progress report within five minutes. completed/checks '
-                         'may be empty; honestly record blockers. Missing/invalid reports past this grace or '
-                         'needs_guidance=true cause the controller to block at the next boundary with no active tool. '
-                         'A valid needs_guidance=false report permits continued work until the next checkpoint. '
-                         'Progress is not completion and never extends the hard budget. If repeated failures, '
-                         'an unclear contract or needs_guidance arise, submit honest blocked DELIVERY and stop '
-                         'for the main Codex to guide the frozen task.\n')
+                         'may be empty; honestly record blockers. Progress is not completion and never extends '
+                         'the hard budget.\n')
+        if enabled(manifest):
+            instructions += ('Reports include a summary string using the frozen summary template. '
+                             'needs_guidance=true requests a bounded final help delivery and graceful stop; '
+                             'submit needs_guidance through the DELIVERY tool. Missing reports/final delivery '
+                             'block the attempt without automatic continuation.\n')
+        else:
+            instructions += ('Missing/invalid reports past the grace or needs_guidance=true block '
+                             'at the next boundary with no active tool. Otherwise continue. If repeated '
+                             'failures or an unclear contract arise, submit blocked DELIVERY and stop '
+                             'for the main Codex to guide the frozen task.\n')
+    if enabled(manifest):
+        instructions += _document_instructions(task, attempt_dir, attempt_dir.parent,
+                                               ('summary', 'help'), 'pi')
+        instructions += """For technical help submit --status needs_guidance with a summary containing
+all help-template sections and a bound evidence packet for your clean, committed partial
+candidate. Unperformed checks use not_run/null. Then stop. A separate read-only Codex
+will answer; continuation uses a fresh Pi attempt under the SAME frozen task/budget.
+Use blocked if you cannot leave a clean candidate or need external/user intervention.
+Never classify a receipt as acceptance or expand authorization through a help request.
+"""
+    disposition = ('--status awaiting_review. If blocked, use --status blocked and explain the concrete blocker.'
+                   if not enabled(manifest) else
+                   '--status awaiting_review for final work, --status needs_guidance with evidence for technical help,\n'
+                   'or --status blocked for an external need or unreconciled candidate. Explain the declared status honestly.')
     prompt = f"""You are the IMPLEMENTER in a Codinator task, not its reviewer.
 Task: {manifest['id']}; round {task['round']}; attempt {task['attempt']}.
 Read the frozen published handoff at {attempt_dir.parent / 'handoff.md'} and applicable AGENTS.md.
@@ -207,15 +258,17 @@ This read-only contract and tool remain authoritative after context compaction.
 Before finishing, reread the contract. Write a summary with changes, checks performed, known failures,
 deviations, not_run items and evidence references. Do not invent hashes/timing/model data.
 Put the summary in /tmp, then run the bound command with --summary /tmp/summary.md
---status awaiting_review. If blocked, use --status blocked and explain the concrete blocker.
+{disposition}
 The tool supplies the exact task/round/attempt, validates the delivery, and returns a JSON receipt.
 Do not handwrite completion.json, choose another delivery path, or create workspace delivery/.
 Correct any tool error before stopping. A submitted receipt requests review; it is not acceptance.
 Then stop. You may not declare accepted. Each edit/check must remain within this task.
 """
+    closeout = Closeout(task, attempt_dir, process_options['timeout']) if enabled(manifest) else None
     _pi_worker(prompt, attempt_dir, private, sandbox, process_options, root,
                delivery_instructions=instructions, allowed=manifest['allowed_paths'],
-               readonly=[attempt_dir.parent], checkpoints=checkpoints, git_write=manifest['version'] == 2, pi_bin=pi_bin)
+               readonly=[attempt_dir.parent], checkpoints=checkpoints, closeout=closeout,
+               git_write=manifest['version'] == 2, pi_bin=pi_bin)
 
 
 def repair_delivery(task, attempt_dir, private, sandbox, process_options, error, pi_bin="pi"):
@@ -226,8 +279,17 @@ def repair_delivery(task, attempt_dir, private, sandbox, process_options, error,
     delivery.mkdir()
     private = private / 'delivery-repair'
     private.mkdir()
-    submit = prepare_contract(task, context, delivery)
-    instructions = _delivery_instructions(context, submit)
+    submit = prepare_contract(task, context, delivery, task_dir=attempt_dir.parent)
+    instructions = _delivery_instructions(context, submit, help_allowed=enabled(task['manifest']))
+    if enabled(task['manifest']):
+        instructions += _document_instructions(task, context, attempt_dir.parent, ('summary', 'help'), 'pi')
+        instructions += ('Preserve an original technical-help request as needs_guidance with the help '
+                         'template and existing candidate evidence; otherwise use awaiting_review or blocked.\n')
+    disposition = ('--status awaiting_review. If the work is incomplete or blocked,\nuse --status blocked and explain why.'
+                   if not enabled(task['manifest']) else
+                   '--status needs_guidance with existing evidence for an original technical-help request,\n'
+                   '--status awaiting_review for original final work, or --status blocked if the existing\n'
+                   'evidence cannot support the declared candidate or an external condition prevents continuation.')
     prompt = f"""You are repairing ONLY the delivery protocol for task {task['id']}.
 Task: {task['id']}; round {task['round']}; attempt {task['attempt']}.
 The implementation process completed normally. Its original delivery is invalid.
@@ -244,8 +306,8 @@ If the existing evidence cannot support an honest packet, submit blocked.
 For awaiting_review also pass --evidence /tmp/evidence.json according to the read-only contract.
 {instructions}
 Reread the contract, write a summary in /tmp, and invoke the bound command with
---summary /tmp/summary.md --status awaiting_review. If the work is incomplete or blocked,
-use --status blocked and explain why. Never handwrite completion.json or use a different directory.
+--summary /tmp/summary.md {disposition}
+Never handwrite completion.json or use a different directory.
 Correct any tool error before stopping. The receipt requests independent Codex verification and
 review, never acceptance. This repair has at most five minutes within the original task budget.
 Then stop.
@@ -264,8 +326,9 @@ SCHEMA = {"type": "object", "additionalProperties": False,
     "required": ["task_id", "submission_digest", "verdict", "summary", "issues"]}
 
 
-def validate_verdict(value, task_id, fingerprint):
-    if type(value) is not dict or set(value) != set(SCHEMA['required']):
+def validate_verdict(value, task_id, fingerprint, message=None):
+    fields = set(SCHEMA['required']) | ({'message'} if message is not None else set())
+    if type(value) is not dict or set(value) != fields:
         raise Problem("Invalid Codex verdict fields")
     if value['task_id'] != task_id or value['submission_digest'] != fingerprint:
         raise Problem("Codex verdict is for a different task or submission")
@@ -284,19 +347,43 @@ def validate_verdict(value, task_id, fingerprint):
         raise Problem("accepted cannot retain unresolved issues")
     if value['verdict'] == 'needs_changes' and not value['issues']:
         raise Problem("needs_changes must contain actionable issues")
+    if message is not None:
+        validate_message(value['message'], message)
+        validate_document(value['summary'], 'review', 'review.summary')
     return value
+
+
+def _reply_binding(task, attempt_dir, source, kind, fingerprint):
+    delivery = selected_delivery(source)
+    completion = json.loads(_read(delivery / 'completion.json'))
+    contract = {'task_id': task['id'], 'round': task['round'], 'attempt': task['attempt'],
+                'handoff': protocol_binding(task, attempt_dir.parent)}
+    return message_binding(contract, kind, fingerprint,
+                           reply_to=completion['message']['message_id'])
+
+
+def _bound_schema(schema, message):
+    schema = json.loads(json.dumps(schema))
+    schema['properties']['message'] = {
+        'type': 'object', 'additionalProperties': False, 'required': list(message),
+        'properties': {key: {'type': 'integer' if type(value) is int else 'string',
+                             'enum': [value]} for key, value in message.items()}}
+    schema['required'].append('message')
+    return schema
 
 
 def reviewer(task, attempt_dir, fingerprint, process_options, codex_bin="codex", *, sandbox, private, evidence_dir=None):
     manifest = task['manifest']
     evidence_dir = attempt_dir if evidence_dir is None else evidence_dir
     implementation_delivery = selected_delivery(evidence_dir)
-    schema = attempt_dir / "verdict-schema.json"
-    delivery = attempt_dir / 'review-delivery'
-    delivery.mkdir()
-    result_file = delivery / "verdict.json"
-    config = codex_home(private / 'codex')
-    write_json(schema, SCHEMA)
+    message = None
+    result_schema = SCHEMA
+    document_instructions = ''
+    if enabled(manifest):
+        message = _reply_binding(task, attempt_dir, evidence_dir, 'review', fingerprint)
+        result_schema = _bound_schema(SCHEMA, message)
+        document_instructions = _document_instructions(task, attempt_dir, attempt_dir.parent, ('review',), 'review')
+        document_instructions += f'\nReturn this exact message binding: {json.dumps(message)}.\n'
     source_instructions = f"""This is an agent-owned Git task on branch {manifest['git']['branch']}.
 Published baseline: {manifest['git']['base_commit']}; tracked handoff path: {manifest['handoff']}.
 Allowed source paths: {json.dumps(manifest['allowed_paths'])}.
@@ -329,6 +416,7 @@ Use gpt-6-astra with xhigh reasoning. You did not implement this code.
 Published requirements: {attempt_dir.parent / 'handoff.md'}.
 Exact submission digest: {fingerprint}.
 {source_instructions}
+{document_instructions}
 Original implementation/check evidence directory: {evidence_dir}.
 Read {evidence_dir}/before.json, submission.json, {implementation_delivery / 'evidence.json'},
 {implementation_delivery / 'summary.md'}, the actual changed source/tests and original Pi tool events. Treat the implementer's
@@ -344,22 +432,42 @@ JSON result. Include exact task_id and submission_digest above. accepted is allo
 only with no unresolved issues. For needs_changes give precise locations, minimal
 changes and verification for every issue; for a research/authority blocker use blocked.
 """
-    (attempt_dir / 'review-prompt.txt').write_text(prompt)
+    result = _codex_result(task, attempt_dir, private, sandbox, process_options, codex_bin,
+                           prompt, result_schema, 'review')
+    return validate_verdict(result, manifest['id'], fingerprint, message)
+
+
+def _codex_result(task, attempt_dir, private, sandbox, process_options, codex_bin, prompt, result_schema, phase):
+    """Dispatch a read-only Codex consumer and require real protocol completion."""
+    reviewing = phase == 'review'
+    schema = attempt_dir / ('verdict-schema.json' if reviewing else 'guidance-schema.json')
+    delivery = attempt_dir / ('review-delivery' if reviewing else 'guidance-delivery')
+    delivery.mkdir()
+    result_file = delivery / ('verdict.json' if reviewing else 'guidance.json')
+    config = codex_home(private / ('codex' if reviewing else 'guidance-codex'))
+    write_json(schema, result_schema)
+    (attempt_dir / f'{phase}-prompt.txt').write_text(prompt)
     argv = [codex_bin, "-a", "never", "exec", "--ignore-user-config", "--sandbox", "read-only",
             "-m", "gpt-6-astra", "-c", 'model_reasoning_effort="xhigh"', "--json",
             "--output-schema", str(schema), "--output-last-message", str(result_file), prompt]
     readonly = [attempt_dir.parent]
-    run_process(sandbox.wrap(argv, manifest['workspace'], writable=[delivery, config], readonly=readonly), cwd=manifest['workspace'],
+    process_out = attempt_dir / ('codex' if reviewing else 'guidance-codex')
+    run_process(sandbox.wrap(argv, task['manifest']['workspace'], writable=[delivery, config], readonly=readonly), cwd=task['manifest']['workspace'],
                 env=os.environ | {'PYTHONDONTWRITEBYTECODE': '1', 'CODEX_HOME': str(config)},
-                out=attempt_dir / 'codex', **process_options)
+                out=process_out, **process_options)
     if not result_file.is_file() or result_file.is_symlink() or result_file.stat().st_size > 1_000_000:
         raise Problem("Missing/invalid Codex verdict artifact")
-    result = validate_verdict(json.loads(result_file.read_text()), manifest['id'], fingerprint)
+    result = _reply_json(result_file) if enabled(task['manifest']) else json.loads(_read(result_file))
     # A process exit of zero plus stale output is not an agent completion event.
     completed, failed = False, False
-    for line in (attempt_dir / 'codex/stdout.txt').read_bytes().split(b'\n'):
+    for line in (process_out / 'stdout.txt').read_bytes().split(b'\n'):
         if line.strip():
-            event = json.loads(line)
+            if enabled(task['manifest']):
+                event, errors, _ = _json(line, process_out / 'stdout.txt')
+                if errors:
+                    raise DeliveryError(errors, repairable=False)
+            else:
+                event = json.loads(line)
             if type(event) is not dict:
                 raise Problem("Codex event must be a JSON object")
             completed |= event.get('type') == 'turn.completed'
@@ -368,4 +476,106 @@ changes and verification for every issue; for a research/authority blocker use b
             failed |= event.get('type') == 'turn.failed'
     if not completed or failed:
         raise Problem("Codex did not emit a successful turn completion")
+    if enabled(task['manifest']):
+        files = {name: _reply_file(attempt_dir / name) for name in _reply_paths(phase)}
+        write_json(attempt_dir / f'{phase}-selection.json',
+                   {'version': 1, 'phase': phase, 'files': files})
+    return result
+
+
+def _reply_paths(phase):
+    if phase not in ('review', 'guidance'):
+        raise Problem('Unknown Codex reply phase')
+    reviewing = phase == 'review'
+    process = 'codex' if reviewing else 'guidance-codex'
+    return (('review-delivery/verdict.json' if reviewing else 'guidance-delivery/guidance.json'),
+            *[f'{process}/{name}' for name in ('launch.json', 'result.json', 'stdout.txt', 'stderr.txt')],
+            f'{phase}-prompt.txt', 'verdict-schema.json' if reviewing else 'guidance-schema.json',
+            f'{phase}-templates.json')
+
+
+def _reply_file(path):
+    # Raw streams can exceed the small document limit, but may never redirect
+    # a receipt to another file through symlinks or a nonregular entry.
+    if path.resolve() != path.absolute() or not path.is_file():
+        raise Problem(f'Missing or linked Codex reply evidence: {path}')
+    return file_info(path)
+
+
+def _reply_json(path):
+    value, errors, _ = _json(_read(path), path)
+    if errors:
+        raise DeliveryError(errors, repairable=False)
+    return value
+
+
+def verify_reply(attempt_dir, phase):
+    """Recheck the exact returned artifact and process evidence before routing."""
+    selection = _reply_json(attempt_dir / f'{phase}-selection.json')
+    paths = _reply_paths(phase)
+    if (type(selection) is not dict or set(selection) != {'version', 'phase', 'files'}
+            or type(selection['version']) is not int or selection['version'] != 1
+            or selection['phase'] != phase or type(selection['files']) is not dict
+            or set(selection['files']) != set(paths)):
+        raise Problem('Invalid Codex reply selection')
+    actual = {name: _reply_file(attempt_dir / name) for name in paths}
+    if actual != selection['files']:
+        raise Problem('Codex reply evidence changed after selection')
+    process = 'codex' if phase == 'review' else 'guidance-codex'
+    result = _reply_json(attempt_dir / process / 'result.json')
+    if (type(result) is not dict or type(result.get('exit_code')) is not int
+            or result['exit_code'] != 0 or result.get('failure') is not None
+            or type(result.get('process_exit_code')) is not int or result['process_exit_code'] != 0
+            or result.get('streams') != {name: actual[f'{process}/{name}']
+                                        for name in ('stdout.txt', 'stderr.txt')}):
+        raise Problem('Codex reply requires successful, intact process evidence')
+    return _reply_json(attempt_dir / paths[0])
+
+
+GUIDANCE_SCHEMA = {'type': 'object', 'additionalProperties': False,
+    'properties': {'task_id': {'type': 'string'}, 'submission_digest': {'type': 'string'},
+                   'result': {'type': 'string', 'enum': ['continue', 'blocked']},
+                   'summary': {'type': 'string'}},
+    'required': ['task_id', 'submission_digest', 'result', 'summary']}
+
+
+def guidance(task, attempt_dir, fingerprint, process_options, codex_bin='codex', *, sandbox, private):
+    """A separate guide answers a bound question; it cannot accept work."""
+    manifest = task['manifest']
+    message = _reply_binding(task, attempt_dir, attempt_dir, 'guidance', fingerprint)
+    document_instructions = _document_instructions(task, attempt_dir, attempt_dir.parent, ('guidance',), 'guidance')
+    delivery = selected_delivery(attempt_dir)
+    prompt = f"""Act as the read-only Codex guide for task {task['id']}.
+Use gpt-6-astra with xhigh reasoning. You are not its final reviewer.
+Original frozen requirements: {attempt_dir.parent / 'handoff.md'}.
+Help request and unverified partial-work evidence: {delivery}.
+Exact declared candidate: {fingerprint}; branch: {manifest['git']['branch']}.
+Published baseline: {manifest['git']['base_commit']}; attempt start: {task['expected_digest']}.
+Allowed source scope: {json.dumps(manifest['allowed_paths'])}.
+Read the request, original Pi tools, and evidence; answer its concrete question.
+Before continue, verify actual HEAD equals the declared candidate, branch and clean
+state match, baseline/attempt start are ancestors, every new commit stays within scope,
+and the tracked handoff/ignore rules are unchanged. Check frozen handoff against its
+tracked bytes at the published baseline. For Git reads disable hooks/fsmonitor, external
+diff/textconv and unsafe configured filters. Do not infer Git truth from the packet alone.
+Source and Git are read-only. Do not edit, commit, merge, push, change acceptance,
+increase permission/budget, or execute uncertain prior operations. Use blocked for
+external/authority needs, unreconciled source state, or inability to verify continuation.
+Guidance is a new linked explanation under the original contract, never acceptance.
+Recheck HEAD/branch/clean state before returning continue. Final acceptance belongs
+to a different independent Codex process after Pi delivers its final candidate.
+{document_instructions}
+Return ONLY schema JSON; summary follows the guidance template. Include task_id
+{task['id']}, submission_digest {fingerprint}, result continue or blocked, and this
+exact message: {json.dumps(message)}.
+"""
+    result = _codex_result(task, attempt_dir, private, sandbox, process_options, codex_bin,
+                           prompt, _bound_schema(GUIDANCE_SCHEMA, message), 'guidance')
+    fields = set(GUIDANCE_SCHEMA['required']) | {'message'}
+    if (type(result) is not dict or set(result) != fields or result['task_id'] != task['id']
+            or result['submission_digest'] != fingerprint or type(result['result']) is not str
+            or result['result'] not in ('continue', 'blocked')):
+        raise Problem('Invalid Codex guidance result or binding')
+    validate_message(result['message'], message)
+    validate_document(result['summary'], 'guidance', 'guidance.summary')
     return result

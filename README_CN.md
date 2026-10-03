@@ -4,7 +4,7 @@ Codinator 为主 Codex、Pi + Bonsai 和独立 Codex 提供任务交接协议与
 主 Codex 负责需求、拆解、handoff 和纠偏；Pi 负责实施、Git 提交与测试；独立 Codex 负责验证和验收。
 **Codinator 不实施业务任务，不运行项目测试，不调用 Git。** 它派发模型进程，传递原始要求和反馈，保存交接证据，控制状态、预算和串行执行。
 
-后续功能范围与实施顺序见 [交接协议与任务推进改造计划](docs/handoff-review-refactor-plan.md)（设计计划，尚未实施）。
+本轮实现依据 [交接协议与任务推进改造计划](docs/handoff-review-refactor-plan.md)。新 v2 任务可显式启用 `handoff_protocol: 1`；旧契约保留原行为。格式通过不表示内容合格，文档内容由作者及接收的 Codex／Pi 负责核验。
 
 ## 环境与安装
 
@@ -45,6 +45,19 @@ codinator --state-dir /absolute/state cancel TASK_ID
 控制器保存发布时的只读 handoff 副本，Pi 与审查者均读取此副本。
 发布记录中的 SHA 是发布者声明；真实 Git 核验由 Pi／Codex 执行。
 
+五类模板自带固定 Markdown 栏目和供对应代理遵循的提示词：
+
+```bash
+codinator template handoff
+codinator template summary
+codinator template help
+codinator template review
+codinator template guidance
+```
+
+模板命令不打开状态库、不调用模型。启用新协议时，控制器只检查必要栏目、非空正文、字段类型、身份、回复关联与引用哈希；栏目齐全但正文含糊，或明确写“无”“未执行”，仍可通过格式校验。目标是否清楚、陈述是否真实、证据是否充分、任务是否合格由代理判断。
+发布时冻结原 handoff 和五类模板，每次派发留存实际提示词；升级模板不改写历史任务。示例见 [manifest](examples/handoff-task.json) 与 [handoff](examples/protocol-handoff.md)。
+
 ## 实施与验收
 
 ```text
@@ -65,6 +78,10 @@ Pi 正常结束后，缺失或格式错误的交付可接受一次不超过五�
 修复只允许整理已有原始证据，源码和 Git 只读，不能补做测试、提交或编造事实；原始交付保留。
 无正常进程／协议终态、实质身份冲突和明确 blocked 不会被修复成成功。
 
+新协议允许 Pi 用 `needs_guidance` 和求助模板提交具体问题，同时提供干净、已提交的部分工作候选与证据包；未做的检查记为 `not_run`／null。确认 Pi 进程结束后，控制器派发源码及 Git 只读的指导 Codex，后者核实真实 Git 现场，再显式返回 `continue` 或 `blocked`。
+`continue` 把关联指导交给新的 Pi attempt；最终交付仍交由另一独立 Codex 验收。`blocked` 停止并交回主 Codex。流程只读取控制字段，不根据正文推断阻塞类型或指导有效性。指导结果与原始进程记录在发布前重新核对完整性；缺失、篡改或退出不确定时停止并保留现场。
+每次 Pi 实施派发消耗一轮，指导及审查共享原截止时间，不另计实施轮次；恢复后的新实施也计入轮次，review-only 保留原实施轮次。
+
 ## 预算与软检查
 
 默认最多四轮、总墙钟四小时、每个 Pi／Codex 进程两小时；实际以已发布任务授权为准。
@@ -73,9 +90,12 @@ Pi 的实施／测试、独立 Codex 的复测／验收与返工共享总预算�
 
 `checkpoint_seconds: 1800` 与 `attempt_seconds: 5400` 表示每30分钟软检查、每个模型进程90分钟硬上限。
 软检查通过 Pi RPC steer 请求已完成事项、实际检查、阻塞、下一步及 `needs_guidance`，不重启会话。
-五分钟内无合法报告或 `needs_guidance=true` 时，控制器在无活动工具的安全边界阻断；长工具仍受硬上限约束。
+旧契约中，五分钟内无合法报告或 `needs_guidance=true` 时，控制器在无活动工具的安全边界阻断；长工具仍受硬上限约束。
 正常报告可继续工作；已锁定违规不能被迟到报告撤销。最后一个尚在宽限内的请求可由合法正式交付替代，留下明确 resolution。
-主 Codex 据证据纠偏，控制器不自动生成指导或启动 planner。
+主 Codex 据证据纠偏，控制器不生成指导内容或诊断。
+
+新协议的检查点报告附带 summary 栏目，作为阶段小结留存并绑定哈希。`needs_guidance=true` 请求 Pi 在原五分钟宽限与实际硬上限内提交最终求助包并正常停止；缺少最终求助包不会继续派发。
+临近硬上限时，控制器提前 `min(300 秒, 实际进程时限的一半)` 请求收尾，不延长截止时间，也不替代理写结论。`status` 分别报告当前处理方、待回复对象、最终小结、最近阶段小结和最终小结缺失；无检查点的硬中断也保留缺失标记。实际进程退出码、协议完成与代理自报结果分别记录。
 
 ## 中断与恢复
 
@@ -127,5 +147,7 @@ PYTHONPATH=src python3 -B -m unittest discover -s tests -v
 ```
 
 测试使用隔离假 agent 和本地 Git 仓库，不能代表真实模型连通或真实研究执行；历史真实验证见 [validation](validation/README.md)，不自动证明新协议已做模型实跑。
+有界真实试点的准备及指标见 [主界面协议](docs/codex-interface.md)：保留可比较基线，记录求助回传、人工介入原因、格式错误时间／轮次、重复阻塞及停止证据。当前未将模拟闭环标为真实 Pi／模型验证。
+源码更新不会升级正在运行的服务；确认旧代理停止后，以新代码重启服务，再发布启用新协议的任务。
 
 实施沙箱将既有 Git HEAD、配置、hooks 和 packed-refs 重新挂载只读；普通提交仍可写 index、objects 和任务 ref。其他 ref 的不变性由 Pi 的起始 `git show-ref` 原始工具记录与独立 Codex 核对，不宣称所有 Git 元数据均有操作系统级写保护。

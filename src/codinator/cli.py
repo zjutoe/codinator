@@ -15,6 +15,7 @@ from .files import Problem
 from .process import run_process
 from .store import Store, lock
 from .status import report
+from .handoff import SECTIONS, template
 
 
 def notifications(store, codex_bin):
@@ -58,8 +59,13 @@ def main(argv=None):
     sub.add_parser('notify', help='Retry pending explicitly configured Codex notifications')
     sub.add_parser('doctor', help='Check local dependencies and bubblewrap without calling models')
     sub.add_parser('service', help='Print a user service unit; does not install/enable it')
+    p = sub.add_parser('template', help='Print a document template; no state or model calls')
+    p.add_argument('kind', choices=tuple(SECTIONS))
     args = parser.parse_args(argv)
     try:
+        if args.command == 'template':
+            print(template(args.kind), end='')
+            return 0
         if args.command == 'service':
             exe = shutil.which('codinator') or str(Path(sys.executable).parent / 'codinator')
             state = str(Path(args.state_dir).expanduser().resolve())

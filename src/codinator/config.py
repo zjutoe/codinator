@@ -4,6 +4,7 @@ from pathlib import Path, PurePosixPath
 import re
 
 from .files import Problem, under
+from .handoff import validate_document
 
 DEFAULT_EXCLUDES = [".venv/", ".pytest_cache/"]
 
@@ -39,11 +40,14 @@ def load_manifest(path):
     raw = json.loads(Path(path).read_text())
     allowed_keys = {"version", "id", "workspace", "handoff", "allowed_paths", "checks", "excludes",
                     "max_rounds", "max_seconds", "attempt_seconds", "checkpoint_seconds", "deadline_utc",
-                    "notify_thread", "integration", "git"}
+                    "notify_thread", "integration", "git", "handoff_protocol"}
     if type(raw) is not dict or set(raw) - allowed_keys:
         raise Problem("Unknown manifest field(s)")
     if raw.get("version") not in (1, 2) or type(raw.get("version")) is not int:
         raise Problem("Manifest version must be 1 (published legacy tasks) or 2 (Git checkpoints)")
+    if 'handoff_protocol' in raw:
+        if raw['version'] != 2 or type(raw['handoff_protocol']) is not int or raw['handoff_protocol'] != 1:
+            raise Problem('handoff_protocol requires version 2 and integer protocol version 1')
     if raw['version'] == 2:
         spec = raw.get('git')
         if type(spec) is not dict or set(spec) != {'branch', 'base_commit'}:
@@ -66,6 +70,8 @@ def load_manifest(path):
     handoff = root / raw["handoff"]
     if not handoff.is_file() or handoff.resolve() != handoff.absolute():
         raise Problem("handoff must be an existing file without symlink components")
+    if 'handoff_protocol' in raw:
+        validate_document(handoff.read_text(encoding='utf-8'), 'handoff', str(handoff))
     for key in ("allowed_paths", "checks"):
         if not isinstance(raw.get(key), list) or not raw[key]:
             raise Problem(f"{key} must be a nonempty array")

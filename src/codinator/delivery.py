@@ -10,10 +10,12 @@ import sys
 import tempfile
 
 from .files import Problem, file_info
+from .handoff import DocumentError, enabled, validate_document, verify_protocol
 
 
 MAX_BYTES = 1_000_000
 STATUSES = ('awaiting_review', 'blocked')
+HANDOFF_STATUSES = (*STATUSES, 'needs_guidance')
 NAMES = ('summary.md', 'completion.json')
 AGENT_PROTOCOL = 'agent_git_v1'
 AGENT_NAMES = (*NAMES, 'evidence.json')
@@ -115,7 +117,42 @@ def _json(data, path):
     return value, errors, blocked
 
 
-def _completion_errors(value, path, task_id, round_number, attempt_number):
+def protocol_binding(task, task_dir):
+    """Bind a dispatch to the original, immutable contract and preceding reply."""
+    record = verify_protocol(task_dir, task['manifest'])
+    reply_to = f'{task["id"]}:handoff'
+    if task.get('feedback'):
+        feedback = json.loads(task['feedback'])
+        if type(feedback) is not dict or type(feedback.get('message')) is not dict:
+            raise Problem('Protocol feedback requires a bound preceding message')
+        reply_to = feedback['message']['message_id']
+    return {'version': 1, 'directory': str(Path(task_dir).absolute()),
+            'contract_digest': record['contract_digest'], 'reply_to': reply_to}
+
+
+def message_binding(contract, kind, submission_digest, *, reply_to=None):
+    """Tool-owned identities; the body and declared result remain agent claims."""
+    return {'version': 1, 'task_id': contract['task_id'], 'round': contract['round'],
+            'attempt': contract['attempt'],
+            'message_id': f'{contract["task_id"]}:{contract["round"]}:{contract["attempt"]}:{kind}',
+            'kind': kind, 'reply_to': reply_to or contract['handoff']['reply_to'],
+            'contract_digest': contract['handoff']['contract_digest'],
+            'submission_digest': submission_digest,
+            'author': {'summary': 'pi', 'help': 'pi', 'review': 'review_codex',
+                       'guidance': 'guidance_codex'}[kind], 'recipient': 'controller'}
+
+
+def validate_message(value, expected, path='message'):
+    if type(value) is not dict or set(value) != set(expected):
+        raise _error('invalid_message', path, sorted(expected), value)
+    errors = [{'code': 'binding_mismatch', 'path': f'{path}.{key}', 'expected': target,
+               'actual': value[key]} for key, target in expected.items()
+              if type(value[key]) is not type(target) or value[key] != target]
+    if errors:
+        raise DeliveryError(errors, repairable=False)
+
+
+def _completion_errors(value, path, task_id, round_number, attempt_number, statuses=STATUSES, message=False):
     if type(value) is not dict:
         return [{'code': 'invalid_type', 'path': str(path), 'expected': 'object',
                  'actual': type(value).__name__}]
@@ -123,7 +160,7 @@ def _completion_errors(value, path, task_id, round_number, attempt_number):
     expected = {'task_id': task_id, 'round': round_number, 'attempt': attempt_number}
     for key in (*expected, 'status'):
         name = f'{path}.{key}'
-        target = list(STATUSES) if key == 'status' else expected[key]
+        target = list(statuses) if key == 'status' else expected[key]
         if key not in value:
             errors.append({'code': 'missing_field', 'path': name,
                            'expected': target, 'actual': '<missing>'})
@@ -132,26 +169,42 @@ def _completion_errors(value, path, task_id, round_number, attempt_number):
             errors.append({'code': 'invalid_type', 'path': name,
                            'expected': 'integer' if key in ('round', 'attempt') else 'string',
                            'actual': type(value[key]).__name__})
-        elif (value[key] not in STATUSES if key == 'status' else value[key] != target):
+        elif (value[key] not in statuses if key == 'status' else value[key] != target):
             errors.append({'code': 'invalid_status' if key == 'status' else 'identity_mismatch',
                            'path': name, 'expected': target, 'actual': value[key]})
-    for key in sorted(set(value) - {*expected, 'status'}):
+    if message and 'message' not in value:
+        errors.append({'code': 'missing_field', 'path': f'{path}.message',
+                       'expected': 'bound message', 'actual': '<missing>'})
+    for key in sorted(set(value) - {*expected, 'status', *(['message'] if message else [])}):
         errors.append({'code': 'unexpected_field', 'path': f'{path}.{key}',
                        'expected': '<absent>', 'actual': value[key]})
     return errors
 
 
-def _summary(data, path):
+def _summary(data, path, kind=None):
     try:
         text = data.decode('utf-8')
     except UnicodeError as exc:
         raise _error('invalid_text', path, 'UTF-8 summary', str(exc), repairable=True) from exc
     if not text.strip():
         raise _error('empty_summary', path, 'nonempty summary', 'empty', repairable=True)
+    if kind:
+        try:
+            validate_document(text, kind, str(path))
+        except DocumentError as exc:
+            raise DeliveryError(exc.errors, repairable=True) from exc
 
 
 def validate_delivery(directory, task_id, round_number, attempt_number):
     directory = Path(directory)
+    contract_path = directory.parent / 'delivery-contract.json'
+    contract = _contract(contract_path) if _optional(contract_path) is not None else None
+    protocol = bool(contract and 'handoff' in contract)
+    statuses = HANDOFF_STATUSES if protocol else STATUSES
+    if protocol:
+        identity = {'task_id': task_id, 'round': round_number, 'attempt': attempt_number}
+        if any(type(contract[k]) is not type(v) or contract[k] != v for k, v in identity.items()):
+            raise _error('binding_mismatch', contract_path, identity, {k: contract[k] for k in identity})
     errors, repairable, status = [], True, None
     for name in NAMES:
         path = directory / name
@@ -162,15 +215,28 @@ def validate_delivery(directory, task_id, round_number, attempt_number):
             else:
                 value, duplicates, blocked = _json(data, path)
                 errors.extend(duplicates)
-                errors.extend(_completion_errors(value, path, task_id, round_number, attempt_number))
+                errors.extend(_completion_errors(value, path, task_id, round_number, attempt_number,
+                                                 statuses, protocol))
                 repairable = repairable and not blocked
                 if type(value) is dict:
                     status = value.get('status')
         except DeliveryError as exc:
             errors.extend(exc.errors)
             repairable = repairable and exc.repairable
+    if protocol and any(error['code'] == 'identity_mismatch' for error in errors):
+        repairable = False
     if errors:
         raise DeliveryError(errors, repairable=repairable)
+    if protocol:
+        packet = _submission_evidence(directory, contract, status)
+        _summary(_read(directory / 'summary.md'), directory / 'summary.md',
+                 'help' if status == 'needs_guidance' else 'summary')
+        completion, duplicates, _ = _json(_read(directory / 'completion.json'), directory / 'completion.json')
+        if duplicates:
+            raise DeliveryError(duplicates, repairable=False)
+        expected = message_binding(contract, 'help' if status == 'needs_guidance' else 'summary',
+                                   packet['git']['commit'] if packet else None)
+        validate_message(completion['message'], expected, str(directory / 'completion.json') + '.message')
     return status
 
 
@@ -317,6 +383,15 @@ def read_submission(directory, task):
     status = validate_delivery(directory, *identity.values())
     if task.get('manifest', {}).get('version') != 2:
         return None
+    if enabled(task['manifest']):
+        contract = _contract(Path(directory).parent / 'delivery-contract.json')
+        if 'handoff' not in contract:
+            raise _error('invalid_contract', directory, 'original handoff protocol binding', 'missing')
+        expected = identity | _agent_binding(task)
+        if any(type(contract.get(k)) is not type(v) or contract[k] != v for k, v in expected.items()):
+            raise _error('binding_mismatch', directory, expected, contract)
+        if contract['handoff'] != protocol_binding(task, contract['handoff']['directory']):
+            raise _error('binding_mismatch', directory, 'original contract and preceding reply', contract['handoff'])
     return _submission_evidence(directory, identity | _agent_binding(task), status)
 
 
@@ -344,7 +419,7 @@ def _encode(value):
     return (json.dumps(value, ensure_ascii=False, indent=2) + '\n').encode('utf-8')
 
 
-def prepare_contract(task, context_dir, delivery_dir):
+def prepare_contract(task, context_dir, delivery_dir, *, task_dir=None):
     context_dir, delivery_dir = Path(context_dir).absolute(), Path(delivery_dir).absolute()
     _directory(context_dir)
     _directory(delivery_dir)
@@ -357,6 +432,10 @@ def prepare_contract(task, context_dir, delivery_dir):
              'attempt': task['attempt'], 'delivery_dir': str(delivery_dir)}
     if task.get('manifest', {}).get('version') == 2:
         value.update(_agent_binding(task))
+    if enabled(task.get('manifest', {})):
+        if task_dir is None:
+            task_dir = context_dir.parent
+        value['handoff'] = protocol_binding(task, task_dir)
     source = Path(__file__).resolve().parents[1]
     program = (f'import sys\nsys.path.insert(0, {str(source)!r})\n'
                'from codinator.delivery import main\n'
@@ -371,6 +450,8 @@ def _contract(path):
     keys = {'version', 'task_id', 'round', 'attempt', 'delivery_dir'}
     if type(value) is dict and 'protocol' in value:
         keys |= {'protocol', 'git', 'checks'}
+    if type(value) is dict and 'handoff' in value:
+        keys.add('handoff')
     if (errors or type(value) is not dict or set(value) != keys
             or type(value['version']) is not int or value['version'] != 1
             or type(value['task_id']) is not str or not value['task_id']
@@ -378,6 +459,25 @@ def _contract(path):
             or type(value['delivery_dir']) is not str or not Path(value['delivery_dir']).is_absolute()
             or ('protocol' in value and not _valid_binding(value))):
         raise _error('invalid_contract', path, 'version 1 attempt-bound contract', value)
+    if 'handoff' in value:
+        spec = value['handoff']
+        if (value.get('protocol') != AGENT_PROTOCOL or type(spec) is not dict
+                or set(spec) != {'version', 'directory', 'contract_digest', 'reply_to'}
+                or type(spec['version']) is not int or spec['version'] != 1
+                or type(spec['directory']) is not str or not Path(spec['directory']).is_absolute()
+                or type(spec['reply_to']) is not str or not spec['reply_to'].strip()):
+            raise _error('invalid_contract', path, 'bound handoff protocol', spec)
+        directory = Path(spec['directory'])
+        _directory(directory)
+        manifest, duplicates, _ = _json(_read(directory / 'manifest.json'), directory / 'manifest.json')
+        if duplicates or type(manifest) is not dict or manifest.get('id') != value['task_id'] or not enabled(manifest):
+            raise _error('invalid_contract', path, 'original task manifest identity', manifest)
+        try:
+            record = verify_protocol(directory, manifest)
+        except Problem as exc:
+            raise _error('invalid_contract', path, 'unchanged frozen protocol evidence', str(exc)) from exc
+        if spec['contract_digest'] != record['contract_digest']:
+            raise _error('binding_mismatch', path, record['contract_digest'], spec['contract_digest'])
     return value
 
 
@@ -400,15 +500,18 @@ def _publish_same(path, data):
 def main(argv=None, *, contract_path):
     parser = argparse.ArgumentParser(description='Submit immutable attempt evidence for independent review; never accept work')
     parser.add_argument('--summary', required=True, type=Path)
-    parser.add_argument('--status', required=True, choices=STATUSES)
+    parser.add_argument('--status', required=True, choices=HANDOFF_STATUSES)
     parser.add_argument('--evidence', type=Path)
     args = parser.parse_args(argv)
     try:
         contract = _contract(Path(contract_path))
+        if args.status == 'needs_guidance' and 'handoff' not in contract:
+            raise _error('invalid_status', 'status', list(STATUSES), args.status)
         directory = Path(contract['delivery_dir'])
         _directory(directory)
         summary = _read(args.summary)
-        _summary(summary, args.summary)
+        _summary(summary, args.summary, ('help' if args.status == 'needs_guidance' else 'summary')
+                 if 'handoff' in contract else None)
         summary_path, completion_path = (directory / name for name in NAMES)
         old_summary, old_completion = _optional(summary_path), _optional(completion_path)
         agent = contract.get('protocol') == AGENT_PROTOCOL
@@ -422,7 +525,7 @@ def main(argv=None, *, contract_path):
                 _evidence(old_evidence, evidence_path, contract)
             if evidence is not None:
                 _evidence(evidence, args.evidence or evidence_path, contract)
-            elif args.status == 'awaiting_review':
+            elif args.status in ('awaiting_review', 'needs_guidance'):
                 raise _error('missing', evidence_path, 'bound Git/check evidence', 'missing', repairable=True)
             if old_evidence is not None and old_evidence != evidence:
                 raise _error('conflict', evidence_path, 'identical existing content', 'different content')
@@ -438,6 +541,11 @@ def main(argv=None, *, contract_path):
         if old_summary is not None and old_summary != summary:
             raise _error('conflict', summary_path, 'identical existing content', 'different content')
         completion = dict(zip(('task_id', 'round', 'attempt'), identity)) | {'status': args.status}
+        if 'handoff' in contract:
+            packet = _evidence(evidence, evidence_path, contract) if evidence is not None else None
+            completion['message'] = message_binding(
+                contract, 'help' if args.status == 'needs_guidance' else 'summary',
+                packet['git']['commit'] if packet else None)
         if old_summary is None:
             _publish_same(summary_path, summary)
         if agent and old_evidence is None and evidence is not None:
@@ -483,6 +591,10 @@ def _selection_protocol(attempt_dir, directory):
     if any(value is None or value.get('protocol') != AGENT_PROTOCOL for value in contracts):
         raise _error('invalid_selection', directory, 'matching agent protocol contracts', contracts)
     keys = ('task_id', 'round', 'attempt', 'protocol', 'git', 'checks')
+    if any('handoff' in value for value in contracts):
+        if any('handoff' not in value for value in contracts):
+            raise _error('invalid_selection', directory, 'matching handoff protocol contracts', contracts)
+        keys += ('handoff',)
     first = {key: contracts[0][key] for key in keys}
     if any({key: value[key] for key in keys} != first for value in contracts[1:]):
         raise _error('invalid_selection', directory, 'same attempt and evidence binding', contracts)

@@ -53,6 +53,17 @@ codinator --state-dir /absolute/state cancel TASK_ID
 Both agents read the controller's immutable copy of the published handoff.
 The publication SHA is a publisher assertion, verified against real Git by Pi/Codex.
 
+New v2 tasks can opt into `"handoff_protocol": 1`; existing manifests keep their
+published behavior. Retrieve the five document templates with `codinator template
+handoff`, `summary`, `help`, `review`, or `guidance`. This command does not open
+workflow state or call a model. Templates contain fixed Markdown sections and role
+instructions. The controller validates headings, nonempty bodies, control types and
+identity bindings only. Vague text and explicit `无`/`未执行`/`None` markers can pass
+format validation; authors and receiving agents must judge content quality and truth.
+Original contracts, template versions/bytes and dispatched prompts are preserved.
+See [the protocol example](examples/handoff-task.json) and
+[its handoff](examples/protocol-handoff.md).
+
 ```text
 ready → implementing (Pi: Git + implementation + tests) → reviewing (Codex) → accepted
                      ↑                                      │
@@ -76,6 +87,17 @@ After confirmed Pi process/protocol completion, a missing or malformed delivery 
 one read-only repair of at most five minutes within the existing budget. Repair can only
 reconstruct existing evidence, never run Git/tests or invent facts. Original evidence remains.
 
+For protocol-1 tasks, Pi may submit `needs_guidance` with the help-template summary
+and a normal evidence packet identifying clean, committed partial work; unperformed
+checks use `not_run`/null. A separate Codex guide verifies the declared Git state in
+a read-only sandbox and returns `continue` or `blocked`. `continue` starts a fresh Pi
+attempt with linked guidance under the original contract. Each Pi dispatch consumes
+one implementation round; guidance/review consume the same deadline without adding
+another implementation round. Only a later independent reviewer can accept work.
+`blocked` stops for main Codex or an external condition. Routing uses explicit fields,
+never an interpretation of the document body. Process uncertainty or a malformed guide
+result stops the task and preserves evidence; no uncertain prompt is automatically replayed.
+
 ## Budgets and recovery
 
 Defaults are four rounds, four hours total wall-clock and two hours per model process;
@@ -88,6 +110,16 @@ within a 90-minute process cap. RPC steer does not restart the session. A valid 
 due within five minutes; missing reports or `needs_guidance=true` block at a boundary with
 no active tool, still subject to the hard deadline. Healthy reports permit continued work.
 Main Codex supplies guidance; the controller does not generate a plan or diagnosis.
+
+With protocol 1, progress reports also carry a structured-section summary, retained as
+a stage summary with a hash binding. `needs_guidance=true` requests a final help packet
+and graceful stop within at most the existing five-minute grace and original hard limit.
+Missing final help blocks automatic continuation. Once near the hard limit, the controller
+steers Pi to close out within `min(300 seconds, half the effective process timeout)`;
+it never extends the deadline. Status distinguishes final submission, latest stage summary,
+and missing final summary, including attempts without checkpoints. Raw process exit and
+protocol completion are recorded separately from agent claims. Paused/resumed protocol-1
+implementation also consumes a new round; review-only retains its original round/evidence.
 
 On interruption, the controller stops the process and preserves the scene. It does not
 commit source, adopt an unknown HEAD, clean caches, or replay an uncertain prompt.
@@ -149,6 +181,13 @@ Historical real-model evidence under [validation](validation/README.md) does not
 that the new protocol has been exercised with real models.
 See the Chinese [interface](docs/codex-interface.md) and [Git protocol](docs/git-checkpoints.md)
 for operational details.
+
+These tests exercise fake agents and real local Git/bubblewrap boundaries. They do not
+attest the new loop's real model connectivity. A bounded real-agent pilot is described
+in the interface documentation. Preserve a baseline and record reply delivery, manual
+intervention reasons, format-error time/rounds, repeated blockers and stop evidence.
+Upgrade a running service only after its agents stop; restart with the new code before
+publishing protocol-1 tasks. Source changes alone do not upgrade an already running service.
 
 Existing Git HEAD, config, hooks and packed-refs are remounted read-only during Pi implementation.
 Ordinary commits can still write index, objects and task refs. Other refs are compared by independent

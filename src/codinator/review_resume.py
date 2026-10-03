@@ -4,6 +4,7 @@ from pathlib import Path
 
 from .files import Problem, file_info
 from .delivery import selected_delivery, validate_delivery, read_submission
+from .handoff import enabled, verify_protocol
 
 
 def require_unfinished_review(attempt):
@@ -126,6 +127,12 @@ def checkpoint(store, task, sandbox, *, accepted=False):
     # protocol evidence. Project checks are rerun by Codex, never by this module.
     evidence('../handoff.md')
     evidence('../manifest.json')
+    if enabled(manifest):
+        record = verify_protocol(source.parent, manifest)
+        evidence('../handoff-protocol.json')
+        for entry in record['templates'].values():
+            evidence('../' + entry['path'])
+        evidence('pi-templates.json')
     evidence('worker-prompt.txt')
     result = {'source_attempt': number, 'source_round': task['round'],
               'submission_digest': fingerprint, 'files': files}

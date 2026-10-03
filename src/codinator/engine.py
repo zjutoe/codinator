@@ -4,10 +4,11 @@ import os
 from pathlib import Path
 import time
 
-from .agents import repair_delivery, reviewer, worker
+from .agents import guidance, repair_delivery, reviewer, verify_reply, worker
 from .config import deadline_timestamp, positive
 from .delivery import DeliveryError, read_submission, select_delivery, selected_delivery, validate_delivery
 from .files import Problem, digest, write_json
+from .handoff import enabled, freeze_protocol, verify_protocol
 from .process import Interrupted, process_start, stop_group
 from .review_resume import checkpoint, require_unfinished_review
 from .sandbox import Sandbox
@@ -42,6 +43,18 @@ def _source(manifest, commit):
     return {'kind': 'git', 'branch': manifest['git']['branch'], 'commit': commit}
 
 
+def _dispatched_round(store, task_id):
+    """Count a published Pi dispatch, including a crash before process startup."""
+    round_number, used = 1, 0
+    for row in store.db.execute(
+            "SELECT payload FROM events WHERE task_id=? AND kind='state' ORDER BY seq", (task_id,)):
+        fields = json.loads(row[0])
+        round_number = fields.get('round', round_number)
+        if fields.get('state') == 'implementing' and fields.get('phase') == 'pi':
+            used = round_number
+    return used
+
+
 class Engine:
     def __init__(self, store, *, sandbox=None, pi_bin='pi', codex_bin='codex'):
         self.store = store
@@ -62,6 +75,8 @@ class Engine:
             write_json(task_dir / 'manifest.json', manifest)
             write_json(task_dir / 'intake.json', _source(manifest, manifest['git']['base_commit']))
             (task_dir / 'handoff.md').write_bytes((root / manifest['handoff']).read_bytes())
+            if enabled(manifest):
+                freeze_protocol(task_dir, manifest)
             self.store.add(manifest, manifest['git']['base_commit'])
 
     def options(self, task_id, timeout):
@@ -73,7 +88,7 @@ class Engine:
     def recover(self):
         """Called under controller.lock; never replay prompts or repair source."""
         for task in self.store.tasks():
-            if task['state'] not in ('implementing', 'checking', 'reviewing', 'integrating') and not task['pid']:
+            if task['state'] not in ('implementing', 'checking', 'reviewing', 'guiding', 'integrating') and not task['pid']:
                 continue
             _require_current(task)
             with lock(_repo_lock(task['manifest'])):
@@ -118,6 +133,10 @@ class Engine:
                 self.store.update(task_id, started=now, deadline=deadline)
                 task = self.store.get(task_id)
             try:
+                if enabled(m):
+                    verify_protocol(self.store.root / 'tasks' / task_id, m)
+                    if task['round'] > m['max_rounds']:
+                        raise Problem('Implementation round budget exhausted')
                 _budget_timeout(task['deadline'], m['attempt_seconds'])
                 before = _source(m, task['expected_digest'])
                 review_only = task['state'] == 'review_ready'
@@ -179,13 +198,44 @@ class Engine:
                     # This records Pi's assertion, not controller verification of Git/tests.
                     write_json(attempt / 'implementation.json', after)
                     write_json(attempt / 'submission.json', after)
+                    if pi_status == 'needs_guidance':
+                        self.store.update(task_id, state='guiding', phase='codex-guidance')
+                        timeout = _budget_timeout(task['deadline'], attempt_seconds)
+                        reply = guidance(task, attempt, after['commit'], self.options(task_id, timeout),
+                                         self.codex_bin, sandbox=self.sandbox, private=private)
+                        if self.store.get(task_id)['pid']:
+                            raise Problem('Guidance process exit is unconfirmed; continuation refused')
+                        selected_delivery(attempt)
+                        verify_protocol(attempt.parent, m)
+                        if verify_reply(attempt, 'guidance') != reply:
+                            raise Problem('Guidance differs from the selected reply artifact')
+                        with self.store.db:
+                            self.store.db.execute('BEGIN IMMEDIATE')
+                            if self.store.get(task_id)['control']:
+                                raise Interrupted('Pause/cancel requested before guidance publication')
+                            write_json(attempt / 'guidance-outcome.json', reply)
+                            if reply['result'] == 'blocked':
+                                raise Problem(reply['summary'])
+                            if task['round'] >= m['max_rounds']:
+                                raise Problem('Implementation round budget exhausted after guidance')
+                            _budget_timeout(task['deadline'], attempt_seconds)
+                            self.store.update(task_id, state='ready', phase='queued',
+                                              round=task['round'] + 1, expected_digest=after['commit'],
+                                              feedback=json.dumps(reply, ensure_ascii=False), review_resume=None)
+                        continue
                     self.store.update(task_id, expected_digest=after['commit'])
                 selected_delivery(evidence_dir or attempt)
                 self.store.update(task_id, state='reviewing', phase='codex')
                 timeout = _budget_timeout(task['deadline'], attempt_seconds)
                 verdict = reviewer(task, attempt, after['commit'], self.options(task_id, timeout), self.codex_bin,
                                    sandbox=self.sandbox, private=private, evidence_dir=evidence_dir)
+                if self.store.get(task_id)['pid']:
+                    raise Problem('Reviewer process exit is unconfirmed; verdict refused')
                 selected_delivery(evidence_dir or attempt)
+                if enabled(m):
+                    verify_protocol(attempt.parent, m)
+                    if verify_reply(attempt, 'review') != verdict:
+                        raise Problem('Verdict differs from the selected reply artifact')
                 if review_only:
                     checkpoint(self.store, self.store.get(task_id), self.sandbox)
                 feedback = json.dumps(verdict, ensure_ascii=False, indent=2)
@@ -247,10 +297,28 @@ class Engine:
                 effective_limit = override or task['manifest']['attempt_seconds']
                 if task['manifest'].get('checkpoint_seconds', 0) >= effective_limit:
                     raise Problem('checkpoint_seconds must remain less than the resumed attempt limit')
-                feedback = task['feedback'] + '\nPrevious interruption: ' + task['reason']
-                feedback += ('\nMain Codex must reconcile any interrupted Git/workspace changes before resume. '
+                interruption = '\nPrevious interruption: ' + task['reason']
+                interruption += ('\nMain Codex must reconcile any interrupted Git/workspace changes before resume. '
                              'Verify the recorded branch and exact starting commit before editing; never overwrite drift.')
                 if attempt_seconds is not None or extra_seconds:
-                    feedback += f'\nExplicit runtime budget update: process limit {effective_limit}s; shared deadline {deadline}. Original contract unchanged.'
+                    interruption += f'\nExplicit runtime budget update: process limit {effective_limit}s; shared deadline {deadline}. Original contract unchanged.'
+                feedback = task['feedback'] + interruption
+                round_number = task['round']
+                if enabled(task['manifest']):
+                    verify_protocol(self.store.root / 'tasks' / task_id, task['manifest'])
+                    if task['feedback']:
+                        previous = json.loads(task['feedback'])
+                        previous['interruption'] = interruption
+                        feedback = json.dumps(previous, ensure_ascii=False)
+                    else:
+                        feedback = ''
+                    if not review_only:
+                        used = _dispatched_round(self.store, task_id)
+                        if round_number not in (used, used + 1):
+                            raise Problem('Inconsistent implementation round accounting; resume refused')
+                        round_number = max(round_number, used + 1)
+                        if round_number > task['manifest']['max_rounds']:
+                            raise Problem('Implementation round budget exhausted; resume refused')
                 self.store.update(task_id, state='review_ready' if review_only else 'ready', review_resume=pinned,
-                                  control=None, reason='', deadline=deadline, attempt_seconds_override=override, feedback=feedback)
+                                  control=None, reason='', deadline=deadline, attempt_seconds_override=override,
+                                  feedback=feedback, round=round_number)

@@ -26,12 +26,17 @@ class ProcessTests(unittest.TestCase):
             self.run_code("import sys; sys.stderr.write('x'*200000); sys.exit(3)")
         r = json.loads((self.root / 'run/result.json').read_text())
         self.assertEqual(r['exit_code'], 3)
+        self.assertEqual(r['process_exit_code'], 3)
+        self.assertIsNone(r['protocol_completed'])
         self.assertEqual((self.root / 'run/stderr.txt').stat().st_size, 200000)
 
     def test_timeout_and_cancel_leave_results(self):
         with self.assertRaises(Interrupted):
             self.run_code('import time; time.sleep(20)', cancel=lambda: True)
-        self.assertIn('Interrupted', json.loads((self.root / 'run/result.json').read_text())['failure'])
+        result = json.loads((self.root / 'run/result.json').read_text())
+        self.assertIn('Interrupted', result['failure'])
+        self.assertIsNone(result['exit_code'])
+        self.assertIsInstance(result['process_exit_code'], int)
 
     def test_initial_rpc_write_is_already_subject_to_hard_deadline(self):
         class Protocol:
@@ -53,6 +58,24 @@ class ProcessTests(unittest.TestCase):
             signal.signal(signal.SIGALRM, previous)
         result = json.loads((self.root / 'run/result.json').read_text())
         self.assertIn('wall-clock budget', result['failure'])
+        self.assertFalse(result['protocol_completed'])
+        self.assertIsInstance(result['process_exit_code'], int)
+
+    def test_rpc_completion_records_cleanup_exit_separately_from_protocol_success(self):
+        class Protocol:
+            def start(self, send):
+                send({'type': 'prompt'})
+            def event(self, event, send):
+                return event['type'] == 'done'
+            def finish(self):
+                pass
+        self.run_code("import sys,time; sys.stdin.readline(); print('{\"type\":\"done\"}', flush=True); time.sleep(60)",
+                      protocol=Protocol())
+        result = json.loads((self.root / 'run/result.json').read_text())
+        self.assertEqual(result['exit_code'], 0)
+        self.assertLess(result['process_exit_code'], 0)
+        self.assertTrue(result['protocol_completed'])
+        self.assertIsNone(result['failure'])
 
     def test_orphan_child_killed_before_leader_reaped(self):
         pid_file = self.root / 'child.pid'

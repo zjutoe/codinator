@@ -111,7 +111,7 @@ class Store:
                 raise Problem('Version 1 tasks are read-only history; use the old service to stop any old active process before upgrading')
             if task['state'] in ('accepted', 'cancelled'):
                 raise Problem('Task already terminal')
-            if task['state'] in ('implementing', 'checking', 'reviewing', 'integrating'):
+            if task['state'] in ('implementing', 'checking', 'reviewing', 'guiding', 'integrating'):
                 self._update(task_id, {'control': action})
             else:
                 self._update(task_id, {'state': 'paused' if action == 'pause' else 'cancelled',

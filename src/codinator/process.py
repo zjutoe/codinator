@@ -57,6 +57,7 @@ def run_process(argv, *, cwd, env, out, timeout, on_start=lambda p, s: None,
     deadline = time.monotonic() + timeout
     write_json(out / "launch.json", {"argv": argv, "cwd": str(cwd), "started": started, "timeout_seconds": timeout})
     code, failure, proc, identity = None, None, None, None
+    protocol_completed = False
     try:
         with (out / "stdout.jsonl" if protocol else out / "stdout.txt").open("xb") as stdout, (out / "stderr.txt").open("xb") as stderr:
             proc = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.PIPE if protocol else subprocess.DEVNULL,
@@ -140,6 +141,7 @@ def run_process(argv, *, cwd, env, out, timeout, on_start=lambda p, s: None,
                         key.fileobj is proc.stdout for key, _ in sel.select(0))
                     if done:
                         protocol.finish()
+                        protocol_completed = True
                         # One prompt per process. No further continuation may own this workspace.
                         stop_group(proc.pid, identity)
                         proc.wait(timeout=5)
@@ -173,6 +175,7 @@ def run_process(argv, *, cwd, env, out, timeout, on_start=lambda p, s: None,
                 code = proc.wait(timeout=5)
                 if protocol:
                     protocol.finish()
+                    protocol_completed = True
             if code != 0:
                 raise Problem(f"Process exited {code}; see {out}")
     except BaseException as exc:
@@ -198,6 +201,8 @@ def run_process(argv, *, cwd, env, out, timeout, on_start=lambda p, s: None,
                     os.fsync(stream.fileno())
                 streams[path.name] = file_info(path)
         write_json(out / "result.json", {"exit_code": code, "failure": failure,
+                   "process_exit_code": proc.returncode if proc is not None else None,
+                   "protocol_completed": protocol_completed if protocol is not None else None,
                    "started": started, "finished": time.time(), "elapsed_seconds": time.time() - started,
                    "streams": streams})
     return code
