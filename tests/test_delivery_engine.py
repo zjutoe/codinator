@@ -1,4 +1,5 @@
 """Delivery fault injection with fake model subprocesses, never real credentials."""
+from legacy_fixture import submit_legacy
 import json
 import os
 from pathlib import Path
@@ -73,7 +74,7 @@ class DeliveryRepairTests(unittest.TestCase):
         self.assertEqual(task['state'], 'blocked')
         self.assertIn('json_too_deep', task['reason'])
         self.assertFalse((out / 'delivery-repair').exists())
-        self.engine.submit(self.manifest | {'id': 'next-task'})
+        submit_legacy(self.engine, self.manifest | {'id': 'next-task'})
         os.environ['FAKE_MODE'] = 'accept'
         self.engine.run('next-task')
         self.assertEqual(self.store.get('next-task')['state'], 'accepted')

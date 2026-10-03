@@ -1,3 +1,4 @@
+from legacy_fixture import submit_legacy
 import json
 import os
 from pathlib import Path
@@ -52,7 +53,7 @@ class EngineTests(unittest.TestCase):
                                           'CODEX_HOME': str(self.base / 'empty-codex'), 'FAKE_MODE': 'accept'})
         self.env.start()
         self.addCleanup(self.env.stop)
-        self.engine.submit(self.manifest)
+        submit_legacy(self.engine, self.manifest)
 
     def test_complete_acceptance_evidence_and_no_git_commit(self):
         self.engine.run('test')

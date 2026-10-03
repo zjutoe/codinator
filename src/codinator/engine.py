@@ -12,7 +12,7 @@ from .process import Interrupted, process_start, run_process, stop_group
 from .review_resume import checkpoint, require_unfinished_review
 from .sandbox import Sandbox
 from .store import lock
-from . import integration
+from . import git_source, integration
 
 
 def _budget_timeout(deadline, limit):
@@ -20,6 +20,23 @@ def _budget_timeout(deadline, limit):
     if remaining <= 0:
         raise Problem('Task wall-clock budget exhausted')
     return min(limit, remaining)
+
+
+def _fingerprint(source):
+    return source['commit'] if source.get('kind') == 'git' else digest(source)
+
+
+def _capture(manifest):
+    if manifest['version'] == 2:
+        current = git_source.record(Path(manifest['workspace']), manifest['git']['branch'])
+        git_source.verify(manifest, current)
+        return current
+    return snapshot(Path(manifest['workspace']), manifest['excludes'])
+
+
+def _repo_lock(manifest):
+    common = git_source.common_dir(Path(manifest['workspace']))
+    return Path('/tmp') / f"codinator-source-{os.getuid()}-{digest(str(common))}.lock"
 
 
 class Engine:
@@ -30,20 +47,21 @@ class Engine:
         self.codex_bin = codex_bin
 
     def submit(self, manifest):
+        if manifest['version'] != 2:
+            raise Problem('New tasks require manifest version 2 with git.branch/base_commit; existing version 1 tasks remain unchanged')
         root = Path(manifest['workspace'])
         if self.store.root == root or self.store.root.is_relative_to(root):
             raise Problem("Controller state must be outside the task workspace")
         task_dir = self.store.root / 'tasks' / manifest['id']
         if task_dir.exists():
             raise Problem("Task artifacts already exist; choose a new task id")
-        integration.publication_preflight(manifest)
-        before = snapshot(root, manifest['excludes'])
-        task_dir.mkdir(parents=True)
-        write_json(task_dir / 'manifest.json', manifest)
-        write_json(task_dir / 'intake.json', before)
-        (task_dir / 'handoff.md').write_bytes((root / manifest['handoff']).read_bytes())
-        preserve(root, before, self.store.root / 'blobs')
-        self.store.add(manifest, digest(before))
+        with lock(_repo_lock(manifest)):
+            before = git_source.preflight(manifest)
+            task_dir.mkdir(parents=True)
+            write_json(task_dir / 'manifest.json', manifest)
+            write_json(task_dir / 'intake.json', before)
+            (task_dir / 'handoff.md').write_bytes((root / manifest['handoff']).read_bytes())
+            self.store.add(manifest, _fingerprint(before))
 
     def options(self, task_id, timeout):
         return dict(timeout=timeout,
@@ -56,31 +74,47 @@ class Engine:
         for task in self.store.tasks():
             if task['state'] not in ('implementing', 'checking', 'reviewing', 'integrating') and not task['pid']:
                 continue
-            if task['pid']:
-                stop_group(task['pid'], task['pid_start'])
-                if process_start(task['pid']) == task['pid_start']:
-                    # PID may be an unreaped zombie: still do not run another worker.
-                    self.store.update(task['id'], state='blocked', reason='Recovery could not confirm old process exit')
-                    continue
-            reason = 'Controller interrupted; previous attempt is uncertain. Inspect evidence, then explicitly resume.'
-            # Preserve partial in-scope work for an explicit new attempt, never overwrite old logs.
-            try:
-                manifest = task['manifest']
-                current = snapshot(Path(manifest['workspace']), manifest['excludes'])
-                attempt = self.attempt_path(task)
-                before = json.loads((attempt / 'before.json').read_text())
-                if task['state'] == 'implementing':
-                    assert_scope(before, current, manifest['allowed_paths'])
-                    preserve(Path(manifest['workspace']), current, self.store.root / 'blobs')
-                    self.store.update(task['id'], expected_digest=digest(current))
-                elif digest(current) != task['expected_digest']:
-                    raise Problem('Frozen submission changed during checks/review')
-            except (Problem, OSError, ValueError) as exc:
-                reason += ' Snapshot recovery: ' + str(exc)
-            self.store.finish(task['id'], reason, state='blocked', reason=reason, pid=None, pid_start=None, control=None)
+            with lock(_repo_lock(task['manifest'])):
+                self._recover_task(task)
+
+    def _recover_task(self, task):
+        if task['pid']:
+            stop_group(task['pid'], task['pid_start'])
+            if process_start(task['pid']) == task['pid_start']:
+                # PID may be an unreaped zombie: still do not run another worker.
+                self.store.update(task['id'], state='blocked', reason='Recovery could not confirm old process exit')
+                return
+        reason = 'Controller interrupted; previous attempt is uncertain. Inspect evidence, then explicitly resume.'
+        # Preserve partial in-scope work for an explicit new attempt, never overwrite old logs.
+        try:
+            manifest = task['manifest']
+            attempt = self.attempt_path(task)
+            before = json.loads((attempt / 'before.json').read_text())
+            if task['state'] == 'implementing':
+                current = self._save_interrupted(task, before, attempt)
+                self.store.update(task['id'], expected_digest=_fingerprint(current))
+            elif _fingerprint(_capture(manifest)) != task['expected_digest']:
+                raise Problem('Frozen submission changed during checks/review')
+        except (Problem, OSError, ValueError) as exc:
+            reason += ' Source checkpoint recovery: ' + str(exc)
+        self.store.finish(task['id'], reason, state='blocked', reason=reason, pid=None, pid_start=None, control=None)
 
     def attempt_path(self, task):
         return self.store.root / 'tasks' / task['id'] / f"attempt-{task['attempt']:04d}"
+
+    def _save_interrupted(self, task, before, attempt):
+        """Only after the old process is confirmed stopped, never during verification."""
+        if task['pid'] and process_start(task['pid']) == task['pid_start']:
+            raise Problem('Previous process exit is unconfirmed; checkpoint refused')
+        manifest = task['manifest']
+        root = Path(manifest['workspace'])
+        if manifest['version'] == 2:
+            purpose = 'submission' if (attempt / 'git-submission-intent.json').exists() else 'interrupted'
+            return git_source.checkpoint(manifest, before, attempt, task['id'], task['attempt'], purpose=purpose)
+        current = snapshot(root, manifest['excludes'])
+        assert_scope(before, current, manifest['allowed_paths'])
+        preserve(root, current, self.store.root / 'blobs')
+        return current
 
     def run(self, task_id):
         with lock(self.store.root / 'controller.lock'):
@@ -90,8 +124,7 @@ class Engine:
                 raise Problem('Previous process exit is unconfirmed; dispatch refused')
             if task['state'] not in ('ready', 'review_ready', 'needs_changes', 'integration_ready'):
                 raise Problem(f"Task is {task['state']}; cannot dispatch")
-            repo_lock = Path('/tmp') / f"codinator-{os.getuid()}-{digest(task['manifest']['workspace'])}.lock"
-            with lock(repo_lock):
+            with lock(_repo_lock(task['manifest'])):
                 self._loop(task_id)
 
     def _loop(self, task_id):
@@ -115,8 +148,8 @@ class Engine:
             try:
                 if time.time() >= task['deadline']:
                     raise Problem('Task wall-clock budget exhausted')
-                before = snapshot(root, m['excludes'])
-                if digest(before) != task['expected_digest']:
+                before = _capture(m)
+                if _fingerprint(before) != task['expected_digest']:
                     raise Problem('Workspace changed outside the recorded attempt; inspect before resuming')
                 review_only = task['state'] == 'review_ready'
                 evidence_dir = None
@@ -156,9 +189,14 @@ class Engine:
                 else:
                     timeout = _budget_timeout(task['deadline'], attempt_seconds)
                     worker(task, attempt, private, self.sandbox, self.options(task_id, timeout), self.pi_bin)
-                    after = snapshot(root, m['excludes'])
+                    if m['version'] == 2:
+                        if self.store.get(task_id)['pid']:
+                            raise Problem('Previous process exit is unconfirmed; checkpoint refused')
+                        after = git_source.checkpoint(m, before, attempt, task_id, task['attempt'])
+                    else:
+                        after = snapshot(root, m['excludes'])
+                        preserve(root, after, self.store.root / 'blobs')
                     write_json(attempt / 'implementation.json', after)
-                    preserve(root, after, self.store.root / 'blobs')
                     delivery = attempt / 'delivery'
                     delivery_error = None
                     try:
@@ -167,13 +205,19 @@ class Engine:
                         delivery_error = exc
                         write_json(attempt / 'delivery-error.json',
                                    {'errors': exc.errors, 'repairable': exc.repairable})
-                    after = clean_bytecode(root, before, after, m['allowed_paths'], m['excludes'],
-                                           attempt.parent, self.store.root / 'blobs')
+                    if m['version'] == 1:
+                        after = clean_bytecode(root, before, after, m['allowed_paths'], m['excludes'],
+                                               attempt.parent, self.store.root / 'blobs')
                     write_json(attempt / 'submission.json', after)
-                    write_json(attempt / 'diff.json', {'paths': changes(before, after), 'digest': digest(after)})
-                    preserve(root, after, self.store.root / 'blobs')
-                    assert_scope(before, after, m['allowed_paths'])
-                    self.store.update(task_id, expected_digest=digest(after))
+                    if m['version'] == 2:
+                        paths = git_source.changed_paths(m, before, after)
+                        git_source.validate_transition(m, before, after)
+                    else:
+                        paths = changes(before, after)
+                        preserve(root, after, self.store.root / 'blobs')
+                        assert_scope(before, after, m['allowed_paths'])
+                    write_json(attempt / 'diff.json', {'paths': paths, 'digest': _fingerprint(after)})
+                    self.store.update(task_id, expected_digest=_fingerprint(after))
                     if delivery_error is not None:
                         if not delivery_error.repairable:
                             raise delivery_error
@@ -186,7 +230,7 @@ class Engine:
                             repair_delivery(task, attempt, private, self.sandbox,
                                             self.options(task_id, timeout), delivery_error, self.pi_bin)
                         finally:
-                            if digest(snapshot(root, m['excludes'])) != digest(after):
+                            if _fingerprint(_capture(m)) != _fingerprint(after):
                                 raise Problem('Workspace changed during delivery repair; submission is invalid')
                         delivery = attempt / 'delivery-repair/delivery'
                         try:
@@ -200,6 +244,8 @@ class Engine:
                         raise Problem(f'Pi reported blocked; read {delivery / "summary.md"}')
                     self.store.update(task_id, state='checking', phase='checks')
                     for check in m['checks']:
+                        if m['version'] == 2:
+                            git_source.verify(m, after)
                         check_timeout = _budget_timeout(task['deadline'], check['timeout_seconds'])
                         try:
                             argv = self.sandbox.wrap(check['argv'], root)
@@ -209,7 +255,9 @@ class Engine:
                             raise
                         except Problem as exc:
                             failures.append(f"{check['name']}: {exc}")
-                if digest(snapshot(root, m['excludes'])) != digest(after):
+                        if m['version'] == 2:
+                            git_source.verify(m, after)
+                if _fingerprint(_capture(m)) != _fingerprint(after):
                     raise Problem('Workspace changed during verification; submission is invalid')
                 selected_delivery(evidence_dir or attempt)
                 if failures:
@@ -219,9 +267,9 @@ class Engine:
                 else:
                     self.store.update(task_id, state='reviewing', phase='codex')
                     timeout = _budget_timeout(task['deadline'], attempt_seconds)
-                    verdict = reviewer(task, attempt, digest(after), self.options(task_id, timeout), self.codex_bin,
+                    verdict = reviewer(task, attempt, _fingerprint(after), self.options(task_id, timeout), self.codex_bin,
                                        sandbox=self.sandbox, private=private, evidence_dir=evidence_dir)
-                    if digest(snapshot(root, m['excludes'])) != digest(after):
+                    if _fingerprint(_capture(m)) != _fingerprint(after):
                         raise Problem('Workspace changed during review; rejecting stale verdict')
                     selected_delivery(evidence_dir or attempt)
                     if review_only:
@@ -254,16 +302,16 @@ class Engine:
                                       feedback=feedback, last_issues=ids, review_resume=None)
             except (Problem, OSError, ValueError, KeyboardInterrupt) as exc:
                 current_task = self.store.get(task_id)
+                checkpoint_error = ''
                 # Keep successful in-scope edits from an interrupted Pi run, but do
                 # not legitimize concurrent edits after the submission was frozen.
                 if current_task['state'] == 'implementing':
                     try:
-                        current = snapshot(root, m['excludes'])
-                        assert_scope(before, current, m['allowed_paths'])
-                        preserve(root, current, self.store.root / 'blobs')
-                        self.store.update(task_id, expected_digest=digest(current))
-                    except (Problem, OSError):
-                        pass
+                        current = self._save_interrupted(current_task, before, self.attempt_path(current_task))
+                        self.store.update(task_id, expected_digest=_fingerprint(current))
+                    except (Problem, OSError, ValueError) as recovery_error:
+                        # Keep the original failure and expose checkpoint failure too.
+                        checkpoint_error = f'; checkpoint not recorded: {recovery_error}'
                 with self.store.db:
                     self.store.db.execute('BEGIN IMMEDIATE')
                     current = self.store.get(task_id)
@@ -271,8 +319,8 @@ class Engine:
                     state = (current['state'] if current['state'] in ('paused', 'cancelled') else
                              'cancelled' if control == 'cancel' else
                              'paused' if control == 'pause' or isinstance(exc, KeyboardInterrupt) else 'blocked')
-                    self.store.finish(task_id, f"{task_id} {state}: {exc}",
-                                      state=state, phase='stopped', reason=str(exc), control=None)
+                    self.store.finish(task_id, f"{task_id} {state}: {exc}{checkpoint_error}",
+                                      state=state, phase='stopped', reason=str(exc) + checkpoint_error, control=None)
                 if isinstance(exc, KeyboardInterrupt):
                     raise
                 return
@@ -285,42 +333,47 @@ class Engine:
         with lock(self.store.root / 'controller.lock'):
             self.recover()
             task = self.store.get(task_id)
-            if task['pid']:
-                raise Problem('Previous process exit is unconfirmed; resume refused')
-            if task['state'] not in ('blocked', 'paused'):
-                raise Problem('Only blocked/paused tasks can be resumed')
-            current = snapshot(Path(task['manifest']['workspace']), task['manifest']['excludes'])
-            if digest(current) != task['expected_digest']:
-                raise Problem('Workspace no longer matches the recorded checkpoint; restore it or publish a new task')
-            pinned = None
-            accepted = task['integration']
-            outcome = self.attempt_path(task) / 'outcome.json'
-            if task['manifest'].get('integration') and (accepted or (
-                    outcome.is_file() and json.loads(outcome.read_text()).get('verdict') == 'accepted')):
-                if review_only:
-                    raise Problem('Review already accepted; resume integration without --review-only')
-                pin, _ = integration.accepted_checkpoint(self.store, task, self.sandbox)
-                accepted = accepted or {'acceptance': pin, 'attempt': 0, 'status': 'pending', 'candidate': None}
-            elif review_only:
-                require_unfinished_review(self.attempt_path(task))
-                pinned, _ = checkpoint(self.store, task, self.sandbox)
-            deadline = task['deadline']
-            if extra_seconds:
-                deadline = max(time.time(), deadline or time.time()) + extra_seconds
-                if 'deadline_utc' in task['manifest']:
-                    deadline = min(deadline, deadline_timestamp(task['manifest']['deadline_utc']))
-            override = task['attempt_seconds_override'] if attempt_seconds is None else attempt_seconds
+            with lock(_repo_lock(task['manifest'])):
+                self._resume(task, extra_seconds, review_only=review_only, attempt_seconds=attempt_seconds)
+
+    def _resume(self, task, extra_seconds, *, review_only, attempt_seconds):
+        task_id = task['id']
+        if task['pid']:
+            raise Problem('Previous process exit is unconfirmed; resume refused')
+        if task['state'] not in ('blocked', 'paused'):
+            raise Problem('Only blocked/paused tasks can be resumed')
+        current = _capture(task['manifest'])
+        if _fingerprint(current) != task['expected_digest']:
+            raise Problem('Workspace no longer matches the recorded checkpoint; restore it or publish a new task')
+        pinned = None
+        accepted = task['integration']
+        outcome = self.attempt_path(task) / 'outcome.json'
+        if task['manifest'].get('integration') and (accepted or (
+                outcome.is_file() and json.loads(outcome.read_text()).get('verdict') == 'accepted')):
+            if review_only:
+                raise Problem('Review already accepted; resume integration without --review-only')
+            pin, _ = integration.accepted_checkpoint(self.store, task, self.sandbox)
+            accepted = accepted or {'acceptance': pin, 'attempt': 0, 'status': 'pending', 'candidate': None}
+        elif review_only:
+            require_unfinished_review(self.attempt_path(task))
+            pinned, _ = checkpoint(self.store, task, self.sandbox)
+        deadline = task['deadline']
+        if extra_seconds:
+            deadline = max(time.time(), deadline or time.time()) + extra_seconds
+            if 'deadline_utc' in task['manifest']:
+                deadline = min(deadline, deadline_timestamp(task['manifest']['deadline_utc']))
+        override = task['attempt_seconds_override'] if attempt_seconds is None else attempt_seconds
+        effective_limit = override if override is not None else task['manifest']['attempt_seconds']
+        if task['manifest'].get('checkpoint_seconds', 0) >= effective_limit:
+            raise Problem('checkpoint_seconds must remain less than the resumed attempt limit')
+        feedback = task['feedback'] + '\nPrevious interruption: ' + task['reason']
+        if attempt_seconds is not None or extra_seconds:
             effective_limit = override if override is not None else task['manifest']['attempt_seconds']
-            if task['manifest'].get('checkpoint_seconds', 0) >= effective_limit:
-                raise Problem('checkpoint_seconds must remain less than the resumed attempt limit')
-            feedback = task['feedback'] + '\nPrevious interruption: ' + task['reason']
-            if attempt_seconds is not None or extra_seconds:
-                effective_limit = override if override is not None else task['manifest']['attempt_seconds']
-                total = f'Unix UTC {deadline}' if deadline is not None else 'set from manifest total budget at first dispatch'
-                feedback += (f'\nRuntime budget update (explicit resume): each Pi/Codex process <= {effective_limit} seconds; '
-                             f'shared task deadline: {total}. Original handoff/manifest remain unchanged; '
-                             'required-check timeouts and scope remain unchanged.')
-            self.store.update(task_id, state='integration_ready' if accepted else 'review_ready' if review_only else 'ready',
-                              integration=accepted, review_resume=task['review_resume'] if accepted else pinned,
-                              control=None, reason='', deadline=deadline,
-                              attempt_seconds_override=override, feedback=feedback)
+            total = f'Unix UTC {deadline}' if deadline is not None else 'set from manifest total budget at first dispatch'
+            feedback += (f'\nRuntime budget update (explicit resume): each Pi/Codex process <= {effective_limit} seconds; '
+                         f'shared task deadline: {total}. Original handoff/manifest remain unchanged; '
+                         'required-check timeouts and scope remain unchanged.')
+        self.store.update(task_id, state='integration_ready' if accepted else 'review_ready' if review_only else 'ready',
+                          integration=accepted, review_resume=task['review_resume'] if accepted else pinned,
+                          control=None, reason='', deadline=deadline,
+                          attempt_seconds_override=override, feedback=feedback)

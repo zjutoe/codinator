@@ -12,7 +12,8 @@ Codex 使用强模型负责需求分析、任务规划与独立验收，Pi 调�
 关闭主界面不会暂停后台任务，只有独立验收结论可以接受工作。
 
 项目提供任务暂停与显式恢复、修改范围和执行预算控制、沙箱隔离及逐轮证据留存；
-经明确授权，还可在验收通过后提交代码并快进合并。
+新任务在专属 Git 分支保存本地检查点，先提交再检查和审查。合并和推送另需明确授权；
+已发布 v1 任务保留原有的显式集成契约。
 
 ## 运行环境
 
@@ -49,9 +50,10 @@ env http_proxy=http://127.0.0.1:8888 https_proxy=http://127.0.0.1:8888 \
 
 ## 在 Codex 中管理任务
 
-复制 [examples/task.json](examples/task.json)，将工作树、交接文档、允许路径和检查命令改为真实值。
-可用 [示例交接文档](examples/demo-handoff.md) 在空的独立仓库中准备任务。
-workspace 必须是独立 Git 仓库或 worktree 的根目录；发布时保存包括未提交改动在内的基线。
+复制 [examples/task.json](examples/task.json)，填写仓库、任务分支、完整基线 SHA、交接文档、允许路径、检查和预算。
+新发布只接受 `version: 2`。在普通仓库中检出任务分支即可，不要求 worktree；
+[示例交接文档](examples/demo-handoff.md)、忽略规则和基线代码须提前提交，发布时工作目录干净。
+详见 [Git 分支与源码检查点](docs/git-checkpoints.md)。
 
 ```bash
 .venv/bin/codinator submit /absolute/path/to/task.json
@@ -62,7 +64,8 @@ workspace 必须是独立 Git 仓库或 worktree 的根目录；发布时保存�
 ```
 
 `submit` 是明确派发授权，服务仅处理已发布任务。`status` 只读，显示状态、原因、轮次、
-attempt、证据位置和带 attempt 标识的最近审查；它不会恢复任务或启动模型。
+attempt、证据位置和带 attempt 标识的最近审查；v2 还显示 `git.branch`、`git.base_commit` 和 `git.checkpoint_commit`。
+它不会恢复任务或启动模型。
 `serve` 是供独立用户服务使用的控制器入口。日常由主 Codex 会话调用上述管理命令。
 操作与故障处理见 [Codex 主界面协议](docs/codex-interface.md)。
 
@@ -81,7 +84,8 @@ ready → implementing → checking → reviewing → accepted
 
 实施交付采用只读的 attempt 契约与绑定提交工具，Pi 只提供汇总和交付状态。
 Pi 确认正常结束且范围检查通过后，缺失或格式错误的交付可在剩余预算内接受一次、最多五分钟的
-专项修复，工作树及原证据只读。控制器固定选用的交付后再执行检查与独立审查。
+专项修复，工作树及原证据只读。v2 在 Pi 停止后先提交范围内源码，再绑定该 SHA 执行检查与独立审查；
+Pi 将开发检查留给提交后的控制器阶段，并如实记录尚未运行。
 排除条件与证据规则见 [实施交付与一次自动修复](docs/codex-interface.md#实施交付与一次自动修复)。
 
 可选 `checkpoint_seconds` 通过 Pi RPC `steer` 按间隔请求实施进展。例如设置
@@ -109,7 +113,8 @@ codinator resume TASK_ID --review-only
 codinator resume TASK_ID --review-only --attempt-seconds 7200 --extra-seconds 3600
 ```
 
-仅审查恢复会核对控制器选用的交付、检查证据与冻结快照，创建新审查 attempt，不增加实施轮次。
+仅审查恢复会核对选用的交付、检查证据及 v2 完整候选 SHA（旧 v1 核对冻结快照），
+创建新审查 attempt，不增加实施轮次；同 tree、不同 SHA 也不能替代原候选。
 若交付经过修复，还会验证两个 Pi 进程的证据；已通过检查的旧协议历史交付仍受支持。
 缺失或损坏证据、工作树变化、检查失败、未完成实施，以及已有但尚未接收的 verdict，都会拒绝该操作。
 若新审查要求返工，服务继续安排下一轮实施与检查。
@@ -119,14 +124,19 @@ codinator resume TASK_ID --review-only --attempt-seconds 7200 --extra-seconds 36
 变更原子记录到 SQLite 事件，新 attempt 的 `budget.json` 保存生效预算，原 manifest 和旧证据不改写。
 
 服务启动时自动检查中断现场；手工执行 `recover` 也只做恢复核对，不派发任务。
-检查原因与证据后才能显式 `resume`。工作树偏离已记录快照时，需要人工核对并恢复，或发布新任务；
+检查原因与证据后才能显式 `resume`。工作树偏离已记录提交（旧 v1 为快照）时，须先检查现场。
+v2 对已停止的范围内未完成工作生成本地检查点；Git 更新中断只按持久操作意图核对，不采纳未知提交；
 控制器不会自动 reset、stash 或回滚。延长超时不能修复代理、额度或连接问题。
 
-manifest 可通过 `integration` 显式授权验收后的 Pi 提交和快进合并。
+已发布 v1 manifest 可通过 `integration` 显式授权验收后的 Pi 提交和快进合并。
 控制器核对接受快照与完整提交树，推广同一个提交，合并完成后才进入 `accepted`；不自动 push。
-未配置时，任务在验收接受后结束。授权和恢复规则见 [验收后集成](docs/codex-interface.md#验收后由-pi-提交并合并)。
+v2 不接受 legacy `integration`，验收后保留在任务分支，合并属于后续单独授权的 Git 操作。旧协议见 [验收后集成](docs/codex-interface.md#验收后由-pi-提交并合并)。
 
 ## 升级边界
+
+新 `submit` 只接受 v2，要求 `git.branch` 和 `git.base_commit`。数据库中的 v1 任务按原契约执行与恢复，
+历史证据、预算和轮次不改写。迁移旧成果时，先停止旧执行者、核对来源、提交任务分支，
+再依据原要求与剩余预算发布明确的后继契约，不直接改旧 manifest 或数据库。
 
 本版移除原生 Pi 终端界面、前台 `run` 命令及单独的 Codex 探针；状态查询不再提供 `--mode`，
 结果也不再包含 `mode` 字段。所有操作统一使用后台任务的状态根目录。
@@ -140,13 +150,16 @@ SQLite 是状态的唯一来源；本版不自动改写项目 README／交接文
 
 - `allowed_paths`：精确文件，或以 `/` 结尾的目录；不支持通配符，不允许 `.git`／`.codex`／`.agents`。
 - `checks[].argv`：参数数组，直接启动进程，不经过隐式 shell。检查在只读工作树中运行；临时产物写 `/tmp`。
-- `excludes`：不纳入内容快照的环境／缓存路径；不能覆盖 tracked 文件，也不能与允许修改范围相交。
+- `git.branch`、`git.base_commit`：v2 必填，指定当前任务分支和完整基线 SHA。
+- v2 使用发布前固定、tracked 的 `.gitignore`；任务内不能改变忽略规则，缓存不纳入提交或自动删除。
+- `excludes`：仅旧 v1 契约使用；v2 拒绝该字段。
 - `max_rounds`、`max_seconds`、`attempt_seconds`：发布前确定的执行边界。
 - `checkpoint_seconds`：可选正整数，须小于 `attempt_seconds`；仅实施阶段启用软进展请求，省略时沿用原行为。
 - `deadline_utc`：可选绝对截止，如 `2026-10-02T06:00:09Z` 或等价的 `+00:00` 时间。首次派发取该截止与 `now + max_seconds` 较早者；已过期不启动 agent。排队延迟及显式恢复增加预算均不能推迟这个冻结上限。
 - `notify_thread`：可选，用户明确指定的 Codex 会话 ID。未设置时保留本地通知，不向外发送。
 
-新任务需要单独 worktree 时先人工／Codex 创建，明确环境与基线，再发布。
+默认使用普通仓库的独立任务分支，同一仓库串行单写入者。控制器按 Git common directory 加锁，
+覆盖发布、运行与恢复，跨状态目录或 worktree 也不能并行写入。worktree 可按实际需要显式创建。
 Codinator 不自动创建工作树或搬迁虚拟环境，避免隐式丢失未提交文件及破坏绝对路径契约。
 
 ## 证据与权限
@@ -156,14 +169,15 @@ Codinator 不自动创建工作树或搬迁虚拟环境，避免隐式丢失未�
 
 ```text
 state.sqlite                          状态、轮次、通知 outbox
-blobs/<sha256>                        去重后的不可覆盖文件内容
+blobs/<sha256>                        仅旧 v1 的源码内容
 tasks/<task>/
-  manifest.json / intake.json          发布时的契约与完整快照
+  manifest.json / intake.json          发布契约及 Git 身份（旧 v1 为完整快照）
   handoff.md                          发布时的原契约文本
   attempt-0001/
-    implementation.json              后台 Pi 确认正常结束后的原始现场（归档缓存之前）
-    before.json / submission.json     文件内容、类型、模式、Git HEAD/index
-    diff.json                         本轮改动范围与快照摘要
+    implementation.json              Pi 结束后的 Git 检查点（旧 v1 为原始现场）
+    before.json / submission.json     Git branch/commit/tree（旧 v1 为文件快照）
+    git-*-intent.json / result.json    v2 的 Git 操作意图／结果，不保存源码 blobs
+    diff.json                         本轮改动路径与 commit SHA（旧 v1 为快照摘要）
     pi-runtime.json                   RPC 报告的实际客户端模型身份
     pi/                               原始 RPC、stderr、进程与退出记录
     delivery-contract.json            只读的任务／轮次／attempt 与目标目录绑定
@@ -192,14 +206,14 @@ notifications/                        通知的每次发送尝试
 
 开发期命令保存在 Pi 原始工具事件中；调度器必需检查另有精确退出码和输出摘要。
 任意开发命令的文本输出不会被冒充为结构化测试计数。
-快照覆盖 tracked、untracked、普通 ignored 文件、目录、删除项、模式与符号链接；
-明确排除的环境／缓存内容不作完整性承诺。符号链接不跟随读取。
+v2 由 Git 管理源码身份；检查与审查要求相同 SHA 和干净工作目录。临时 Git index 核验真实文件，
+避免时间戳缓存掩盖内容修改。旧 v1 快照保留其原有 tracked/untracked/ignored 文件与排除规则。
 
 Pi 在 bubblewrap 中运行：主机文件默认只读，Git 元数据与现存非授权文件只读；
 允许文件所需父目录可写以支持原子替换。新建越界条目会被事后范围检查拒绝，
 这不等于所有非法新文件都在创建前被阻断。超范围时保留现场并暂停，不自动删除。
-后台 Pi 进程与 RPC 确认正常结束后会先留存原始现场，再归档严格识别的新 Python 缓存；有其他越界时不清理，
-冻结检查／审查不清理。未完成协议与中断恢复仍要求检查原始证据和快照，详见主界面协议。
+v2 使用固定 Git 忽略规则，不归档或删除缓存；原 v1 任务保留原始现场保存和受限 Python 缓存归档行为。
+中断恢复要求检查原始进程证据及对应的源码检查点，详见主界面协议。
 Codex 也有外层进程隔离，工作树只读，CLI 内层显式 `--sandbox read-only`、`-a never`。
 两种 agent 都启用父进程退出清理与 PID namespace；没有不受限运行的自动降级。
 这属于单用户工程隔离，不是对恶意同 UID 主机进程的安全防线。

@@ -28,7 +28,7 @@ class SandboxTests(unittest.TestCase):
             private = root / 'private'
             private.mkdir()
             task = {'id': 'tmp-state', 'round': 1, 'attempt': 1, 'feedback': '',
-                    'manifest': {'id': 'tmp-state', 'workspace': str(workspace),
+                    'manifest': {'version': 1, 'id': 'tmp-state', 'workspace': str(workspace),
                                  'handoff': 'handoff.md', 'allowed_paths': ['product.py'], 'checks': []}}
             # Use a real bwrap boundary with a fake model, never copy host credentials.
             with patch.dict(os.environ, {'PI_CODING_AGENT_DIR': str(root / 'empty-pi'),

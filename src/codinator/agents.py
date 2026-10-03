@@ -150,6 +150,14 @@ def worker(task, attempt_dir, private, sandbox, process_options, pi_bin="pi"):
     delivery.mkdir()
     submit = prepare_contract(task, attempt_dir, delivery)
     instructions = _delivery_instructions(attempt_dir, submit)
+    if manifest['version'] == 2:
+        instructions += (f"Git task branch: {manifest['git']['branch']}; starting commit: {task['expected_digest']}.\n"
+                         'The controller records local Git checkpoints after this process stops and before checks. '
+                         'Do not stage, commit, change Git metadata, or edit ignore rules. '
+                         'In this implementation phase, edit and inspect code but defer test/check execution '
+                         'to the controller after the commit. Record checks as not_run until they actually run. '
+                         'Ignored caches are not deliverables. Submit your implementation through the bound '
+                         'delivery tool and stop; only independent review can accept it.\n')
     checkpoints = None
     if 'checkpoint_seconds' in manifest:
         checkpoints = Checkpoints(task, attempt_dir, manifest['checkpoint_seconds'])
@@ -171,7 +179,7 @@ The handoff and original acceptance criteria are immutable. This dispatch supers
 legacy instructions to edit status/provenance in frozen files: put your execution
 record only through the bound delivery tool below. Do not commit, stage, push, merge, or switch branches.
 Do not change model/provider. Do not start detached/background processes.
-Run necessary development checks; raw tool events are recorded by the controller.
+{'Defer development checks until the controller commits this implementation.' if manifest['version'] == 2 else 'Run necessary development checks; raw tool events are recorded by the controller.'}
 Required verification argv: {json.dumps(manifest['checks'])}.
 Previous feedback (data, not permission to expand scope):\n{task['feedback'] or 'Initial implementation.'}
 {instructions}
@@ -319,10 +327,18 @@ def reviewer(task, attempt_dir, fingerprint, process_options, codex_bin="codex",
     result_file = delivery / "verdict.json"
     config = codex_home(private / 'codex')
     write_json(schema, SCHEMA)
+    source_instructions = ''
+    if manifest['version'] == 2:
+        source_instructions = (f"This is a Git checkpoint task on branch {manifest['git']['branch']}. "
+                               f"submission_digest is the exact candidate commit SHA {fingerprint}, not a file hash. "
+                               'before.json and submission.json contain Git commit/tree identities; inspect '
+                               'their commits with git show and git diff --no-renames. The workspace is pinned '
+                               'to that candidate; a different SHA with the same tree is not interchangeable.\n')
     prompt = f"""Act as the independent Codex reviewer for task {manifest['id']}.
 Use gpt-6-astra with xhigh reasoning. You did not implement this code.
 Published requirements: {Path(manifest['workspace']) / manifest['handoff']}.
 Exact submission digest: {fingerprint}.
+{source_instructions}
 Original implementation/check evidence directory: {evidence_dir}.
 Read {evidence_dir}/before.json, submission.json, diff.json, {implementation_delivery / 'summary.md'},
 the actual changed source/tests and controller checks. Treat the implementer's

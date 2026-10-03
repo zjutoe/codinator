@@ -1,4 +1,5 @@
 """Real Git, deterministic fake model subprocesses; not model connectivity evidence."""
+from legacy_fixture import submit_legacy
 import json
 import os
 from pathlib import Path
@@ -53,7 +54,7 @@ class IntegrationTests(unittest.TestCase):
                                           'FAKE_MODE': 'accept', 'FAKE_INTEGRATION': ''})
         self.env.start()
         self.addCleanup(self.env.stop)
-        self.engine.submit(self.manifest)
+        submit_legacy(self.engine, self.manifest)
 
     def task_dir(self):
         return self.store.root / 'tasks/test'

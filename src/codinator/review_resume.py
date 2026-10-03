@@ -4,6 +4,7 @@ from pathlib import Path
 
 from .files import Problem, assert_scope, changes, digest, file_info
 from .delivery import selected_delivery, validate_delivery
+from . import git_source
 
 
 def require_unfinished_review(attempt):
@@ -65,17 +66,32 @@ def checkpoint(store, task, sandbox, *, accepted=False):
     if not accepted:
         require_unfinished_review(source)
     before, submitted = document('before.json'), document('submission.json')
-    for name, value in (('before.json', before), ('submission.json', submitted)):
-        if (type(value.get('git')) is not dict or type(value.get('root_mode')) is not int
-                or type(value.get('files')) is not dict
-                or any(type(k) is not str or type(v) is not dict for k, v in value['files'].items())):
-            raise Problem(f'Malformed snapshot evidence: {name}')
-    fingerprint = digest(submitted)
+    manifest = task['manifest']
+    if manifest['version'] == 2:
+        git_source.validate_transition(manifest, before, submitted)
+        git_source.verify(manifest, submitted)
+        fingerprint = submitted['commit']
+        paths = git_source.changed_paths(manifest, before, submitted)
+        intent = document('git-submission-intent.json')
+        if (set(intent) != {'version', 'task_id', 'attempt', 'purpose', 'workspace', 'before', 'candidate'}
+                or intent.get('version') != 1 or intent.get('purpose') != 'submission'
+                or intent.get('workspace') != manifest['workspace']
+                or intent.get('task_id') != task['id'] or intent.get('attempt') != number
+                or intent.get('before') != before or intent.get('candidate') != submitted
+                or document('git-submission-result.json') != submitted):
+            raise Problem('Git checkpoint intent/result does not match the reviewed attempt')
+    else:
+        for name, value in (('before.json', before), ('submission.json', submitted)):
+            if (type(value.get('git')) is not dict or type(value.get('root_mode')) is not int
+                    or type(value.get('files')) is not dict
+                    or any(type(k) is not str or type(v) is not dict for k, v in value['files'].items())):
+                raise Problem(f'Malformed snapshot evidence: {name}')
+        fingerprint = digest(submitted)
+        assert_scope(before, submitted, manifest['allowed_paths'])
+        paths = changes(before, submitted)
     if fingerprint != task['expected_digest']:
         raise Problem('Review submission no longer matches the recorded checkpoint')
-    manifest = task['manifest']
-    assert_scope(before, submitted, manifest['allowed_paths'])
-    if document('diff.json') != {'paths': changes(before, submitted), 'digest': fingerprint}:
+    if document('diff.json') != {'paths': paths, 'digest': fingerprint}:
         raise Problem('Review diff does not match the submitted snapshot')
 
     def successful_pi(prefix=''):

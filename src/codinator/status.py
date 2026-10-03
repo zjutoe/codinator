@@ -17,6 +17,10 @@ def report(store, task):
                   process_alive=bool(task['pid'] and task['pid_start']
                                      and process_start(task['pid']) == task['pid_start']),
                   latest_review=None)
+    if task['manifest']['version'] == 2:
+        result['git'] = {'branch': task['manifest']['git']['branch'],
+                         'base_commit': task['manifest']['git']['base_commit'],
+                         'checkpoint_commit': task['expected_digest']}
     if 'checkpoint_seconds' in task['manifest']:
         result['checkpoint_seconds'] = task['manifest']['checkpoint_seconds']
         result['latest_checkpoint'] = None

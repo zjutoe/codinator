@@ -1,6 +1,6 @@
 # Codex 主界面与后台执行
 
-日常从原生 Codex 界面管理任务，调用 Codinator CLI 即可；不需要嵌入 Codex TUI、接入 App Server 或增加 MCP 服务。Codex 主会话负责交接、明确发布、读取状态和解释异常；后台 `serve` 持有进程与持久状态，Pi + Bonsai 实施，独立 Codex 进程审查冻结快照。后台自动返工不依赖主会话继续对话或接收通知。
+日常从原生 Codex 界面管理任务，调用 Codinator CLI 即可；不需要嵌入 Codex TUI、接入 App Server 或增加 MCP 服务。Codex 主会话负责交接、明确发布、读取状态和解释异常；后台 `serve` 持有进程与持久状态，Pi + Bonsai 实施，独立 Codex 进程审查固定候选提交（旧 v1 为冻结快照）。后台自动返工不依赖主会话继续对话或接收通知。
 
 ## 一次性准备独立服务
 
@@ -20,7 +20,9 @@ systemctl --user is-active codinator.service
 
 ## 在 Codex 中操作
 
-交接、独立工作树、模型、允许路径、检查和预算全部确定后，才发布一个任务：
+交接、任务分支与基线 SHA、模型、允许路径、检查和预算全部确定后，才发布一个 v2 任务。
+普通仓库的独立分支即可，不要求 worktree；工作目录须干净，契约和忽略规则提前提交。
+见 [Git 分支与源码检查点](git-checkpoints.md)。已发布 v1 任务保留原协议，不接受新的 v1 发布：
 
 ```bash
 codinator submit /absolute/path/to/task.json
@@ -38,7 +40,8 @@ codinator status TASK_ID
 | `state` / `phase` / `reason` | 控制器记录的当前状态、阶段及原因 |
 | `round` / `attempt` | 当前实施轮次与最近分配的 attempt；两者不一定相同 |
 | `control` | 尚待执行中的进程响应的暂停或取消请求 |
-| `workspace` | 任务工作树 |
+| `workspace` | 任务仓库工作目录 |
+| `git` | v2 的任务分支、发布基线及最新检查点 SHA |
 | `evidence` / `attempt_evidence` | 任务与最近 attempt 的证据位置；未开始时后者为空 |
 | `latest_review` | 最近落盘的 outcome、其 attempt、摘要和 Markdown 路径；包括控制器检查返工，可能属于历史轮次 |
 | `process_alive` | 已记录的检查／agent 子进程 PID 和启动标识是否仍匹配；不代表服务健康 |
@@ -67,13 +70,13 @@ codinator status TASK_ID
 
 若 Pi 进程及 RPC 已确认正常结束，缺文件、空汇总或 JSON 格式／身份错误会记录到
 `delivery-error.json`，逐项给出错误路径、预期值、实际值及是否允许修复。控制器先保存原始现场、
-核对修改范围并冻结提交快照，才允许在当前 attempt 中启动**最多一次**仅修复交付的 Pi 进程。
+核对修改范围并固定候选提交（旧 v1 为冻结快照），才允许在当前 attempt 中启动**最多一次**仅修复交付的 Pi 进程。
 此时状态为 `checking`，阶段为 `delivery-repair`；时间上限为 300 秒、单进程上限和总剩余预算
 三者的最小值，不增加实施轮次，也不延长总截止时间。
 
 修复进程的工作树和原 attempt 证据只读，交付输出只写新的 `delivery-repair/delivery/`；
 临时文件仍使用 `/tmp`，运行时配置与会话使用独立私有目录。它只能据原证据整理汇总并提交，
-不能修改源代码、重跑审计或检查、安装依赖或改动原交付。控制器再次核对冻结快照和新交付，
+不能修改源代码、重跑审计或检查、安装依赖或改动原交付。控制器再次核对候选提交和新交付，
 修复成功后继续正常必需检查与独立审查。原坏交付始终保留，不自动从工作树其他目录搜索或迁移文件。
 
 明确报告 `blocked`（包括能识别为 blocked 的错误格式）、链接、非普通文件、超大或超深 JSON、越界修改、
@@ -96,11 +99,14 @@ codinator resume TASK_ID
 
 暂停是明确操作；阅读日志、询问进度、退出主界面不等于暂停。运行中的进程停止需要时间，以控制器最终状态为准。恢复前阅读 `reason` 和证据，核对工作树与进程；普通恢复安排新实施 attempt，旧证据保留，不是向旧进程重发提示。
 
-已完整交付（包括上述一次修复后选定的交付）、检查通过，仅独立审查因基础设施中断时，可使用 `codinator resume TASK_ID --review-only`；控制器验证旧提交及检查证据后只运行新审查。存在未协调的 verdict、证据损坏、快照变化或未完成实施会拒绝此操作。额度耗尽时不要把反复 resume 当成修复。
+已完整交付（包括上述一次修复后选定的交付）、检查通过，仅独立审查因基础设施中断时，可使用 `codinator resume TASK_ID --review-only`；控制器验证旧提交及检查证据后只运行新审查。存在未协调的 verdict、证据损坏、提交或工作目录变化（旧 v1 为快照变化）、未完成实施会拒绝此操作。额度耗尽时不要把反复 resume 当成修复。
 
 后台总时间仍包括暂停时间。确需额外预算且已获授权时，使用 `--extra-seconds N` 或 `--attempt-seconds N` 明确记录，不改旧 manifest。主会话无需逐工具或逐轮调用模型监控；按用户查询读取状态，或使用明确配置的 `notify_thread` 接收终态通知即可。通知失败不改变结果，也不阻止后台返工。
 
 ## 验收后由 Pi 提交并合并
+
+本节仅适用于升级前已发布的 v1 integration 契约。v2 在检查前已有本地 Git 提交，
+验收后保留在任务分支，后续合并须单独授权；v2 不接受此 legacy integration 配置。
 
 用户授权后，在新任务 manifest 中增加以下字段；没有此字段的旧任务行为保持不变。
 这是发布契约的一部分，不能给已冻结任务静默补授权。`target_workspace` 必须是同一
@@ -137,6 +143,9 @@ codinator resume TASK_ID
 集成受原任务总截止时间与单进程预算约束，暂停、取消与最终合并串行处理。
 
 ## Python 缓存与故障证据
+
+v2 使用发布前固定的 `.gitignore`，缓存不进入源码检查点，不因创建缓存失配，也不自动清理。
+改变忽略规则、未忽略的越界修改仍会阻塞。以下归档流程只描述既有 v1 任务：
 
 Pi 实施进程将默认 Python 缓存目录放在仓外。`python -I` 会忽略环境变量，子进程仍需显式 `-B`。后台 Pi 成功结束进程及 RPC 协议后，先保存 `implementation.json` 和内容 blobs，再严格识别并归档新增字节码，最后冻结 `submission.json`。需要的交付修复及后续检查、审查均使用该冻结快照。
 

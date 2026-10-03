@@ -16,8 +16,9 @@ Pi + Bonsai implementation, required checks, independent Codex review, and autom
 Closing the main interface does not pause background tasks. Only an independent review verdict can accept work.
 
 The project supports task pausing and explicit recovery, modification scope and execution budgets,
-sandbox isolation, and evidence preservation for each attempt. With explicit authorization,
-it can also commit accepted changes and merge them by fast-forward.
+sandbox isolation, and evidence preservation for each attempt. New tasks use Git branches and local
+checkpoint commits before checks/review. Acceptance does not authorize merging or pushing; existing
+version 1 tasks retain their explicitly authorized legacy integration behavior.
 
 ## Requirements
 
@@ -58,10 +59,11 @@ The controller verifies and records Pi's actual client identity through RPC, rat
 
 ## Managing tasks from Codex
 
-Copy [examples/task.json](examples/task.json) and set the actual workspace, handoff document,
-allowed paths, and check commands. Use the [sample handoff](examples/demo-handoff.md) to prepare
-a task in an empty, separate repository. The workspace must be the root of a separate Git repository
-or worktree. Publication captures its baseline, including uncommitted changes.
+Copy [examples/task.json](examples/task.json) and set the actual workspace, handoff, allowed paths,
+checks, task branch and full baseline commit SHA. New publication requires manifest version 2 and a
+clean committed baseline. Use a normal repository checkout on its task branch; a worktree is optional.
+Commit the [sample handoff](examples/demo-handoff.md) and fixed ignore rules before publishing.
+See [Git checkpoints](docs/git-checkpoints.md) (Chinese) for the protocol and migration boundaries.
 
 ```bash
 .venv/bin/codinator submit /absolute/path/to/task.json
@@ -73,7 +75,8 @@ or worktree. Publication captures its baseline, including uncommitted changes.
 
 `submit` explicitly authorizes dispatch; the service only processes published tasks.
 `status` is read-only. It reports the state, reason, round, attempt, evidence paths, and latest review
-with its attempt identifier. It never resumes a task or starts a model.
+with its attempt identifier. Version 2 also reports `git.branch`, `git.base_commit` and
+`git.checkpoint_commit`. It never resumes a task or starts a model.
 `serve` is the controller entry point for the independent user service. For everyday use,
 the main Codex session invokes the management commands above.
 See the [Codex interface protocol](docs/codex-interface.md) (Chinese) for operations and troubleshooting.
@@ -96,7 +99,8 @@ out-of-scope changes, and untrustworthy verdicts block the task. Prompts with un
 Implementation delivery uses a read-only attempt contract and a bound submission tool: Pi supplies only
 a summary and disposition. After confirmed Pi completion and scope checks, a missing or malformed delivery
 can receive one repair of at most five minutes within the remaining budget, with the workspace and original
-evidence read-only. The controller pins the selected delivery before checks and independent review.
+evidence read-only. For version 2, the controller commits in-scope work after Pi stops, then pins the candidate SHA and
+selected delivery before checks and independent review. Pi defers development checks to that committed stage.
 See [delivery and bounded repair](docs/codex-interface.md#实施交付与一次自动修复) (Chinese) for exclusions and evidence rules.
 
 An optional `checkpoint_seconds` requests implementation progress through Pi RPC `steer` at that interval.
@@ -130,7 +134,8 @@ codinator resume TASK_ID --review-only
 codinator resume TASK_ID --review-only --attempt-seconds 7200 --extra-seconds 3600
 ```
 
-Review-only recovery verifies the controller-selected delivery, check evidence, and frozen snapshot,
+Review-only recovery verifies the controller-selected delivery, check evidence, and exact Git commit
+(version 2) or frozen snapshot (existing version 1),
 then creates a new review attempt without increasing the implementation round.
 If delivery was repaired, it also verifies both Pi processes; checked historical deliveries remain supported.
 It rejects missing or damaged evidence, workspace changes, failed checks, incomplete implementation,
@@ -145,17 +150,25 @@ the effective values. The original manifest and previous evidence are not rewrit
 
 The service examines interrupted work on startup. Manually running `recover` also only performs
 recovery checks; it does not dispatch tasks. Inspect the reason and evidence before explicitly resuming.
-If the workspace differs from the recorded snapshot, inspect and restore it manually or publish a new task.
+If the workspace differs from the recorded commit (or legacy snapshot), inspect it before resuming.
+Version 2 reconciles interrupted Git updates from durable task-bound intent records and preserves
+stopped in-scope work in local commits. It never adopts arbitrary commits or replays an uncertain prompt.
 The controller does not automatically reset, stash, or roll back changes.
 Increasing timeouts cannot fix proxy, quota, or connectivity problems.
 
-A manifest can explicitly authorize Pi to commit and fast-forward merge accepted changes through `integration`.
+Existing version 1 manifests can explicitly authorize Pi to commit and fast-forward merge accepted changes through `integration`.
 The controller verifies the accepted snapshot and complete commit tree, promotes the same commit,
 and marks the task `accepted` only after the merge finishes. It never pushes automatically.
-Without this configuration, the task ends when review accepts it.
+Version 2 rejects legacy `integration` and ends on its task branch when review accepts it.
+Merging that branch is a separate, explicitly authorized Git action.
 See [integration after acceptance](docs/codex-interface.md#验收后由-pi-提交并合并) (Chinese) for authorization and recovery rules.
 
 ## Upgrade boundaries
+
+New `submit` accepts only version 2 with `git: {branch, base_commit}`. Persisted version 1 tasks
+keep their original contracts, snapshots, execution and recovery semantics; they are not silently migrated.
+Do not change old manifests or database rows to migrate work. Stop the old writer, preserve its evidence,
+commit the selected source on a task branch, and publish an explicit successor within the authorized budget.
 
 This version removes the native Pi terminal interface, the foreground `run` command,
 and the standalone Codex review probe. Status queries no longer accept `--mode`,
@@ -173,14 +186,17 @@ this version does not automatically update status text in project READMEs or han
 
 - `allowed_paths`: exact files, or directories ending in `/`. Wildcards and `.git`, `.codex`, and `.agents` are forbidden.
 - `checks[].argv`: an argument array used to launch a process directly, without an implicit shell. Checks run against a read-only workspace; write temporary output to `/tmp`.
-- `excludes`: environment or cache paths omitted from content snapshots. They cannot cover tracked files or overlap the allowed modification scope.
+- `git.branch`, `git.base_commit`: required for version 2; the checked-out task branch and exact committed baseline.
+- Fixed tracked `.gitignore` rules govern caches in version 2. Ignore rules cannot change during a task; ignored caches are neither checkpointed nor deleted.
+- `excludes`: legacy version 1 only. Version 2 rejects it.
 - `max_rounds`, `max_seconds`, `attempt_seconds`: execution limits established before publication.
 - `checkpoint_seconds`: optional positive integer smaller than `attempt_seconds`; implementation-only soft progress requests. Omission preserves existing behavior.
 - `deadline_utc`: optional absolute ceiling, such as `2026-10-02T06:00:09Z` or the equivalent `+00:00` timestamp. First dispatch uses the earlier of this ceiling and `now + max_seconds`; an expired task starts no agent. Queue delays and explicit resume budget extensions cannot move this frozen ceiling.
 - `notify_thread`: an optional Codex session ID explicitly selected by the user. Without it, notifications remain local and are not sent externally.
 
-If a task needs a separate worktree, create it manually or through Codex, establish its environment
-and baseline, then publish the task. Codinator does not automatically create worktrees or relocate
+Use one writer per Git repository. The controller locks the common Git directory across publication,
+execution and recovery, including separate state directories. If a worktree is useful, prepare it explicitly;
+it is not required. Codinator does not automatically create worktrees or relocate
 virtual environments, avoiding implicit loss of uncommitted files or broken absolute-path contracts.
 
 ## Evidence and permissions
@@ -191,14 +207,15 @@ The directory permissions are 0700.
 
 ```text
 state.sqlite                         State, rounds, notification outbox
-blobs/<sha256>                       Deduplicated, immutable file contents
+blobs/<sha256>                       Legacy version 1 file contents only
 tasks/<task>/
-  manifest.json / intake.json         Published contract and complete baseline snapshot
+  manifest.json / intake.json         Contract and Git baseline (legacy v1: full snapshot)
   handoff.md                         Original contract text at publication
   attempt-0001/
-    implementation.json             Raw workspace after confirmed Pi completion, before cache archival
-    before.json / submission.json    File contents, types, modes, Git HEAD/index
-    diff.json                        Changed paths and snapshot digest
+    implementation.json             Git checkpoint after Pi completion (legacy v1: raw snapshot)
+    before.json / submission.json    Git branch/commit/tree (legacy v1: file snapshot)
+    git-*-intent.json / result.json   Version 2 Git update intent/result; no source blobs
+    diff.json                        Changed paths and commit SHA (legacy v1: snapshot digest)
     pi-runtime.json                  Actual client model identity reported by RPC
     pi/                              Raw RPC, stderr, process and exit records
     delivery-contract.json           Read-only task/round/attempt and destination binding
@@ -227,15 +244,16 @@ notifications/                       Each notification delivery attempt
 
 Development commands are recorded in Pi's raw tool events. Required controller checks have their own
 exact exit codes and output digests. Arbitrary command output is never presented as structured test counts.
-Snapshots cover tracked, untracked, and ordinary ignored files, directories, deletions, modes, and symlinks.
-Explicitly excluded environment or cache contents have no integrity guarantee. Symlinks are not followed when reading content.
+Version 2 source identity comes from Git; checks/review require the same SHA and a clean workspace.
+A fresh temporary Git index verifies working contents without trusting cached file timestamps.
+Legacy version 1 snapshots retain their prior tracked/untracked/ignored-file and exclusion semantics.
 
 Pi runs inside bubblewrap. Host files are read-only by default, as are Git metadata and existing files
 outside the allowed scope. Parent directories needed for allowed files are writable to support atomic replacement.
 New out-of-scope entries are rejected by a subsequent scope check; this does not prevent every unauthorized
 new file from being created. Scope violations preserve the workspace and stop execution rather than deleting files.
-After confirmed Pi process and RPC completion, the controller preserves the raw workspace, then archives only strictly
-recognized new Python caches. It performs no cleanup when other scope violations exist or during frozen checks and review.
+Version 2 uses fixed Git ignore rules and does not archive or delete caches. Existing version 1 tasks
+retain their raw workspace preservation and strictly bounded Python cache archival behavior.
 Incomplete protocols and interrupted attempts still require inspection of the original evidence and snapshots;
 see the interface protocol for details.
 

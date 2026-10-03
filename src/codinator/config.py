@@ -39,11 +39,23 @@ def load_manifest(path):
     raw = json.loads(Path(path).read_text())
     allowed_keys = {"version", "id", "workspace", "handoff", "allowed_paths", "checks", "excludes",
                     "max_rounds", "max_seconds", "attempt_seconds", "checkpoint_seconds", "deadline_utc",
-                    "notify_thread", "integration"}
+                    "notify_thread", "integration", "git"}
     if type(raw) is not dict or set(raw) - allowed_keys:
         raise Problem("Unknown manifest field(s)")
-    if raw.get("version") != 1 or type(raw.get("version")) is not int:
-        raise Problem("Manifest version must be 1")
+    if raw.get("version") not in (1, 2) or type(raw.get("version")) is not int:
+        raise Problem("Manifest version must be 1 (published legacy tasks) or 2 (Git checkpoints)")
+    if raw['version'] == 2:
+        spec = raw.get('git')
+        if type(spec) is not dict or set(spec) != {'branch', 'base_commit'}:
+            raise Problem('Version 2 requires git.branch and git.base_commit')
+        if not isinstance(spec['branch'], str) or not spec['branch'] or spec['branch'].startswith('-'):
+            raise Problem('git.branch must be a branch name')
+        if not isinstance(spec['base_commit'], str) or not re.fullmatch(r'(?:[0-9a-f]{40}|[0-9a-f]{64})', spec['base_commit']):
+            raise Problem('git.base_commit must be an exact commit SHA')
+        if 'excludes' in raw or 'integration' in raw:
+            raise Problem('Version 2 uses fixed Git ignore rules and task-local commits; excludes/integration are legacy-only')
+    elif 'git' in raw:
+        raise Problem('Git checkpoints require manifest version 2')
     if not isinstance(raw.get("id"), str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", raw["id"]):
         raise Problem("Invalid task id")
     root = Path(raw["workspace"]).expanduser().resolve(strict=True)
@@ -66,7 +78,7 @@ def load_manifest(path):
             raise Problem(f"Writable path may not traverse a symlink: {p}")
         if target.is_dir() and not p.endswith("/"):
             raise Problem(f"Directory allowlists need trailing '/': {p}")
-    raw.setdefault("excludes", DEFAULT_EXCLUDES.copy())
+    raw.setdefault("excludes", DEFAULT_EXCLUDES.copy() if raw['version'] == 1 else [])
     if not isinstance(raw["excludes"], list):
         raise Problem("excludes must be an array")
     raw["excludes"] = [relative(p) for p in raw["excludes"]]
@@ -114,4 +126,6 @@ def load_manifest(path):
                any(under(q.rstrip("/"), [p]) for q in spec["planning_paths"]) for p in raw["allowed_paths"]):
             raise Problem("Integration planning paths may not overlap implementation paths")
         spec["target_workspace"] = str(target)
+    if raw['version'] == 2:
+        del raw['excludes']
     return raw

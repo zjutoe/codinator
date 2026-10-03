@@ -1,5 +1,6 @@
 """Optional budget/checkpoint integration using local fake agents only."""
 from datetime import datetime, timezone
+from legacy_fixture import submit_legacy
 import json
 from pathlib import Path
 import unittest
@@ -23,7 +24,7 @@ class CheckpointEngineTests(unittest.TestCase):
         path = self.base / 'bounded.json'
         path.write_text(json.dumps(self.manifest | {'id': 'bounded'} | changes))
         manifest = load_manifest(path)
-        self.engine.submit(manifest)
+        submit_legacy(self.engine, manifest)
         return manifest
 
     def test_queue_delay_cannot_extend_absolute_deadline(self):
