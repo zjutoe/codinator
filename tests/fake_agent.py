@@ -278,8 +278,11 @@ def review():
         if (git('rev-parse', 'HEAD') != fingerprint or submitted['commit'] != fingerprint
                 or packet['git']['commit'] != fingerprint):
             reject('Candidate SHA does not match actual Git HEAD')
-        pi_events = [json.loads(line) for line in (source / 'pi/stdout.jsonl').read_text().split('\n') if line]
-        refs_event = next((e for e in pi_events if e.get('type') == 'fixture_refs'), None)
+        if manifest.get('implementation') == 'external':
+            refs_event = {'stdout': (source / 'external-initial-refs.txt').read_text()}
+        else:
+            pi_events = [json.loads(line) for line in (source / 'pi/stdout.jsonl').read_text().split('\n') if line]
+            refs_event = next((e for e in pi_events if e.get('type') == 'fixture_refs'), None)
         def non_task_refs(output):
             refs = dict(line.split(' ', 1)[::-1] for line in output.splitlines())
             refs.pop('refs/heads/' + contract['git']['branch'], None)

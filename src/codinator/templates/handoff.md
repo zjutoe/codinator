@@ -22,3 +22,10 @@ Give independently verifiable conditions, with stable identifiers when helpful.
 
 ## Handoff rules
 State submission and help boundaries, bound tool/destination and the next handler.
+
+For a new compact-checkpoint task, state the first verifiable behavioral result and
+its evidence in the manifest's first_checkpoint, with named counterexamples. These
+are author obligations, not controller judgments. Keep this handoff executable by
+itself; reference historical drafts only to resolve a specific unknown. Prepare
+permissions/dependencies before publishing, preserve shared stage allowances and
+declare whether implementation is Pi or an authorized external main Codex.

@@ -138,7 +138,7 @@ def message_binding(contract, kind, submission_digest, *, reply_to=None):
             'kind': kind, 'reply_to': reply_to or contract['handoff']['reply_to'],
             'contract_digest': contract['handoff']['contract_digest'],
             'submission_digest': submission_digest,
-            'author': {'summary': 'pi', 'help': 'pi', 'review': 'review_codex',
+            'author': {'summary': contract.get('implementation_author', 'pi'), 'help': contract.get('implementation_author', 'pi'), 'review': 'review_codex',
                        'guidance': 'guidance_codex'}[kind], 'recipient': 'controller'}
 
 
@@ -436,6 +436,8 @@ def prepare_contract(task, context_dir, delivery_dir, *, task_dir=None):
         if task_dir is None:
             task_dir = context_dir.parent
         value['handoff'] = protocol_binding(task, task_dir)
+        if task['manifest'].get('implementation') == 'external':
+            value['implementation_author'] = 'main_codex'
     source = Path(__file__).resolve().parents[1]
     program = (f'import sys\nsys.path.insert(0, {str(source)!r})\n'
                'from codinator.delivery import main\n'
@@ -452,6 +454,8 @@ def _contract(path):
         keys |= {'protocol', 'git', 'checks'}
     if type(value) is dict and 'handoff' in value:
         keys.add('handoff')
+    if type(value) is dict and 'implementation_author' in value:
+        keys.add('implementation_author')
     if (errors or type(value) is not dict or set(value) != keys
             or type(value['version']) is not int or value['version'] != 1
             or type(value['task_id']) is not str or not value['task_id']
@@ -476,6 +480,9 @@ def _contract(path):
             record = verify_protocol(directory, manifest)
         except Problem as exc:
             raise _error('invalid_contract', path, 'unchanged frozen protocol evidence', str(exc)) from exc
+        external = manifest.get('implementation') == 'external'
+        if external != ('implementation_author' in value) or (external and value['implementation_author'] != 'main_codex'):
+            raise _error('invalid_contract', path, 'published implementation author', value.get('implementation_author'))
         if spec['contract_digest'] != record['contract_digest']:
             raise _error('binding_mismatch', path, record['contract_digest'], spec['contract_digest'])
     return value

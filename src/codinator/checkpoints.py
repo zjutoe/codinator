@@ -2,6 +2,7 @@
 import argparse
 import json
 import math
+import re
 from pathlib import Path
 import shlex
 import sys
@@ -32,12 +33,14 @@ def _identity(value):
 def _contract(path):
     value = _document(path)
     fields = {'version', 'task_id', 'round', 'attempt', 'directory'}
-    if (set(value) not in (fields, fields | {'handoff_protocol'})
+    if (set(value) not in (fields, fields | {'handoff_protocol'}, fields | {'handoff_protocol', 'checkpoint_format'})
             or type(value['version']) is not int or value['version'] != 1
             or ('handoff_protocol' in value and
                 (type(value['handoff_protocol']) is not int or value['handoff_protocol'] != 1))
             or type(value['directory']) is not str or not Path(value['directory']).is_absolute()):
         raise Problem('Invalid checkpoint contract')
+    if 'checkpoint_format' in value and value['checkpoint_format'] != 'compact':
+        raise Problem('Invalid checkpoint format')
     _identity(value)
     return value
 
@@ -58,15 +61,21 @@ def _request(directory, identity, number):
     return value
 
 
-def _progress(value, protocol=False):
+def _progress(value, protocol=False, compact=False):
     fields = {'completed', 'checks', 'blockers', 'next_step', 'needs_guidance'}
-    if protocol:
+    if compact:
+        fields.add('candidate_commit')
+    elif protocol:
         fields.add('summary')
     if type(value) is not dict or set(value) != fields:
         if protocol:
             raise Problem('Progress requires completed, checks, blockers, next_step, needs_guidance and summary')
         raise Problem('Progress requires only completed, checks, blockers, next_step and needs_guidance')
-    if protocol:
+    if compact:
+        sha = value['candidate_commit']
+        if sha is not None and (type(sha) is not str or not re.fullmatch(r'(?:[0-9a-f]{40}|[0-9a-f]{64})', sha)):
+            raise Problem('candidate_commit must be an exact SHA or null')
+    elif protocol:
         validate_document(value['summary'], 'summary', 'progress.summary')
     for key in ('completed', 'blockers'):
         if type(value[key]) is not list or any(type(s) is not str or not s.strip() for s in value[key]):
@@ -84,16 +93,16 @@ def _progress(value, protocol=False):
     return value
 
 
-def _report(directory, identity, number, protocol=False):
+def _report(directory, identity, number, protocol=False, compact=False):
     value = _document(directory / 'reports' / f'{number:04d}.json')
     _bound(value, identity, number)
     if set(value) != {*identity, 'checkpoint', 'progress'}:
         raise Problem('Invalid checkpoint report fields')
-    _progress(value['progress'], protocol)
+    _progress(value['progress'], protocol, compact)
     return value
 
 
-def _resolution(directory, identity, number, protocol=False):
+def _resolution(directory, identity, number, protocol=False, compact=False):
     value = _document(directory / 'resolutions' / f'{number:04d}.json')
     _bound(value, identity, number)
     source = value.get('source')
@@ -110,7 +119,7 @@ def _resolution(directory, identity, number, protocol=False):
         if type(report) is not dict or set(report) != {*identity, 'checkpoint', 'progress'}:
             raise Problem('Invalid resolved checkpoint report')
         _bound(report, identity, number)
-        _progress(report['progress'], protocol)
+        _progress(report['progress'], protocol, compact)
         if protocol:
             report_path = directory / 'reports' / f'{number:04d}.json'
             stage_path = directory / f'stage-summary-{number:04d}.md'
@@ -118,9 +127,9 @@ def _resolution(directory, identity, number, protocol=False):
             data = _read(stage_path)
             if (value['report_file'] != file_info(report_path)
                     or value['stage_summary'] != {'path': str(stage_path), **file_info(stage_path)}
-                    or data != report['progress']['summary'].encode('utf-8')):
+                    or data != _stage_summary(report['progress'], compact).encode('utf-8')):
                 raise Problem('Checkpoint report or stage summary changed after resolution')
-            if _report(directory, identity, number, True) != report:
+            if _report(directory, identity, number, True, compact) != report:
                 raise Problem('Resolved checkpoint report differs from original evidence')
     else:
         delivery = value[source]
@@ -133,6 +142,13 @@ def _resolution(directory, identity, number, protocol=False):
                                                  {'summary.md', 'completion.json', 'evidence.json'})):
             raise Problem('Invalid final-delivery checkpoint resolution')
     return value
+
+
+def _stage_summary(progress, compact):
+    if not compact:
+        return progress['summary']
+    # Render only the author's supplied claims, without inventing completion facts.
+    return 'Checkpoint claims (not acceptance):\n' + json.dumps(progress, ensure_ascii=False, indent=2) + '\n'
 
 
 def main(argv=None, *, contract_path):
@@ -148,7 +164,8 @@ def main(argv=None, *, contract_path):
         directory = Path(contract['directory'])
         _request(directory, identity, args.request)
         protocol = enabled(contract)
-        progress = _progress(_document(args.report), protocol)
+        compact = contract.get('checkpoint_format') == 'compact'
+        progress = _progress(_document(args.report), protocol, contract.get('checkpoint_format') == 'compact')
         report = identity | {'checkpoint': args.request, 'progress': progress}
         target = directory / 'reports' / f'{args.request:04d}.json'
         try:
@@ -169,12 +186,15 @@ class Checkpoints:
         self.identity = _identity({'task_id': task['id'], 'round': task['round'], 'attempt': task['attempt']})
         self.interval = interval
         self.protocol = enabled(task.get('manifest', {}))
+        self.compact = task.get('manifest', {}).get('checkpoint_format') == 'compact'
         self.timeout = timeout
         self.context = Path(context).absolute()
         self.directory = self.context / 'checkpoints'
         self.directory.mkdir()
         for name in ('requests', 'acks', 'reports', 'resolutions'):
             (self.directory / name).mkdir()
+        if self.compact:
+            (self.directory / 'observed').mkdir()
         if self.protocol:
             for name in ('help-requests', 'help-acks'):
                 (self.directory / name).mkdir()
@@ -184,6 +204,8 @@ class Checkpoints:
         binding = {'version': 1, **self.identity, 'directory': str(self.directory)}
         if self.protocol:
             binding['handoff_protocol'] = 1
+        if self.compact:
+            binding['checkpoint_format'] = 'compact'
         _write_once(contract, _encode(binding))
         source = Path(__file__).resolve().parents[1]
         program = (f'import sys\nsys.path.insert(0, {str(source)!r})\n'
@@ -270,6 +292,22 @@ If no valid report arrives within five minutes, this attempt blocks at a boundar
 with no active tool. An ongoing tool may finish subject to the original hard limit.
 Otherwise continue this task. Do not extend budgets, permissions or scope, change
 acceptance, restart the session, replay uncertain execution or switch model.'''
+        if self.compact:
+            goal = self.task['manifest']['first_checkpoint']
+            message = f'''Codinator soft checkpoint {number}; progress for the same attempt.
+At the next safe tool boundary, report BEFORE beginning more implementation work.
+Within five minutes use {self.command} --request {number} --report /tmp/progress.json.
+Exactly six JSON fields: completed (facts/criterion IDs), checks (actual argv,
+integer exit_code, result, evidence), blockers, next_step, needs_guidance,
+candidate_commit (exact SHA or null). Arrays may be empty. No Markdown summary.
+First verifiable outcome: {goal}
+Report whether that outcome has actual evidence. Reading/design alone is not
+behavioral verification. If the goal lacks evidence, state why and request guidance
+when no concrete progress or an unresolved contract conflict prevents continuation.
+Codex evaluates content; this tool checks only structure. Final/help/blocked DELIVERY
+still requires its full summary. Report receipt is not acceptance. The five-minute
+grace and original hard limit remain unchanged. Never interrupt an active tool,
+replay uncertain work or extend scope/budget.'''
         send({'id': request['rpc_id'], 'type': 'steer', 'message': message})
         self.next_due = now + self.interval
 
@@ -284,7 +322,7 @@ acceptance, restart the session, replay uncertain execution or switch model.'''
                                 'elapsed_seconds': now - self.started, source: evidence}
         if self.protocol and source == 'report':
             stage_path = self.directory / f'stage-summary-{number:04d}.md'
-            _write_once(stage_path, evidence['progress']['summary'].encode('utf-8'))
+            _write_once(stage_path, _stage_summary(evidence['progress'], self.compact).encode('utf-8'))
             value['stage_summary'] = {'path': str(stage_path), **file_info(stage_path)}
             value['report_file'] = file_info(self.directory / 'reports' / f'{number:04d}.json')
         _write_once(self.directory / 'resolutions' / f'{number:04d}.json', _encode(value))
@@ -298,7 +336,7 @@ acceptance, restart the session, replay uncertain execution or switch model.'''
         if self.protocol:
             for number in self.resolutions:
                 try:
-                    _resolution(self.directory, self.identity, number, True)
+                    _resolution(self.directory, self.identity, number, True, self.compact)
                 except (Problem, OSError, ValueError) as exc:
                     self._violate(number, 'checkpoint_evidence_changed', now, str(exc))
                     return
@@ -316,7 +354,7 @@ acceptance, restart the session, replay uncertain execution or switch model.'''
             try:
                 if not path.exists() and not path.is_symlink():
                     continue
-                value = _report(self.directory, self.identity, number, self.protocol)
+                value = _report(self.directory, self.identity, number, self.protocol, self.compact)
             except (Problem, OSError, ValueError):
                 # A malformed file does not satisfy the deadline. Give the agent
                 # the remaining response grace without killing an active tool.
@@ -409,6 +447,23 @@ acceptance, restart the session, replay uncertain execution or switch model.'''
                     'directory': str(delivery), 'status': disposition,
                     'files': {name: file_info(delivery / name) for name in names}})
         self.enforce(now, set())
+
+    def message_observed(self, event):
+        if not self.compact or event.get('type') != 'message_end':
+            return
+        message = event.get('message', {})
+        if type(message) is not dict or message.get('role') != 'user':
+            return
+        for part in message.get('content', []):
+            if type(part) is not dict or part.get('type') != 'text':
+                continue
+            match = re.match(r'Codinator soft checkpoint (\d+);', part.get('text', ''))
+            if match and int(match[1]) in self.deadlines:
+                number = int(match[1])
+                path = self.directory / 'observed' / f'{number:04d}.json'
+                if not path.exists():
+                    _write_once(path, _encode(self.identity | {'checkpoint': number,
+                        'observed_elapsed_seconds': time.monotonic() - self.started}))
 
     def response(self, event):
         rpc_id = event.get('id')
@@ -510,6 +565,7 @@ def status(context, task_id, attempt):
         return None
     contract = _contract(contract_path)
     protocol = enabled(contract)
+    compact = contract.get('checkpoint_format') == 'compact'
     identity = _identity(contract)
     if identity['task_id'] != task_id or identity['attempt'] != attempt:
         raise Problem('Checkpoint contract does not belong to the reported task/attempt')
@@ -548,7 +604,7 @@ def status(context, task_id, attempt):
         resolution_path = directory / 'resolutions' / path.name
         resolution = None
         if resolution_path.exists() or resolution_path.is_symlink():
-            resolution = _resolution(directory, identity, number, protocol)
+            resolution = _resolution(directory, identity, number, protocol, compact)
             latest_resolution = resolution | {'path': str(resolution_path)}
         responded = report_path.exists() or report_path.is_symlink()
         if resolution is not None and resolution['source'] == 'report':
@@ -557,7 +613,7 @@ def status(context, task_id, attempt):
                 latest_stage = resolution['stage_summary']
             responded = True
         elif responded:
-            latest_report = _report(directory, identity, number, protocol)
+            latest_report = _report(directory, identity, number, protocol, compact)
             latest_report['path'] = str(report_path)
         else:
             unanswered.append(number)
@@ -566,6 +622,14 @@ def status(context, task_id, attempt):
         latest_request = request | {'rpc_accepted': ack['success'] if ack else None,
                                     'report_received': responded, 'path': str(path),
                                     'resolved_by': resolution['source'] if resolution else None}
+        if compact:
+            observed_path = directory / 'observed' / path.name
+            seen = _document(observed_path) if observed_path.exists() else None
+            if seen is not None:
+                _bound(seen, identity, number)
+            latest_request['agent_message_observed'] = seen is not None
+            latest_request['agent_message_latency_seconds'] = (seen['observed_elapsed_seconds'] - request['elapsed_seconds']) if seen else None
+            latest_request['report_latency_seconds'] = (resolution['elapsed_seconds'] - request['elapsed_seconds']) if resolution else None
         count += 1
     enforcement = {}
     for name in ('violation', 'stop'):

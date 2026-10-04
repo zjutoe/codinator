@@ -154,3 +154,25 @@ PYTHONPATH=src python3 -B -m unittest discover -s tests -v
 源码更新不会升级正在运行的服务；确认旧代理停止后，以新代码重启服务，再发布启用新协议的任务。
 
 实施沙箱将既有 Git HEAD、配置、hooks 和 packed-refs 重新挂载只读；普通提交仍可写 index、objects 和任务 ref。其他 ref 的不变性由 Pi 的起始 `git show-ref` 原始工具记录与独立 Codex 核对，不宣称所有 Git 元数据均有操作系统级写保护。
+
+## S03 后续 harness 改进
+
+新任务可显式启用 `checkpoint_format="compact"`，并声明 `first_checkpoint` 和
+`counterexamples`：软报告只填写完成、检查、阻塞、下一步、指导需求与候选 SHA，
+完整 summary 留给交付/求助/停止。主 Codex 根据真实证据判进展，控制器只校验格式。
+`status` 区分 RPC 收到、代理事件流中观察到请求、报告有效及各自延迟，不声称模型已理解。
+30分钟软检查、5分钟回应、90分钟硬限不变，旧任务协议不改。
+
+阶段内各包使用相同 `stage={id,max_seconds,max_rounds}`，共享首次执行起点、固定截止和
+实施轮次；失败和外部接管也计数，检查与验收共享时间。权限与依赖预检在发布/启动前完成。
+`status.stage` 显示整个阶段成员与剩余额度；阶段按同一状态目录记账，不追溯迁移旧任务。
+
+已授权 Codex 接管可发布 `implementation="external"` 的冻结后继：`begin-external` 记录
+起点、作者、额度和仓库占用，主 Codex 实施/提交/测试并通过绑定工具交付，
+`finish-external` 只排队独立验收。只有非作者真实验收可 accepted；返工等待原作者，
+控制器不调用 Git/测试、不伪造 Pi 进程证据。跨状态目录的控制器也受接管占用约束。
+宿主 Codex 负责自身90分钟硬停/30分钟检查，控制器不能杀宿主；超时交付拒收且保留占用。
+确认工具全部停止后，可用 `stop-external TASK --summary FILE` 保存完整阻塞小结并释放占用，
+即使原交付已存在也不覆盖。执行命令与完整约束见英文 README 的 S03 harness improvements。
+
+本次合成/fake-agent验证不能宣称真实模型连通或 S04 已完成；旧 S03 证据及状态保留原样。

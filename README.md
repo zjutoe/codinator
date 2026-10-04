@@ -400,3 +400,88 @@ reply delivery, manual intervention reasons, format-error time/rounds, repeated 
 and stop evidence. Report unperformed real-agent validation explicitly.
 See the Chinese [interface](docs/codex-interface.md) and [Git protocol](docs/git-checkpoints.md)
 for operational details.
+
+## S03 harness improvements (opt-in for new tasks)
+
+Prepare permissions, dependencies, output paths, a clean committed checkout and the
+concrete handoff before publishing. Relative budget starts when execution begins;
+do not freeze an earlier absolute cutoff during approval preparation. Once started,
+waiting/paused time counts and neither a successor ID nor rework resets the window.
+
+New protocol-1 tasks can declare:
+
+```json
+{
+  "checkpoint_seconds": 1800,
+  "attempt_seconds": 5400,
+  "checkpoint_format": "compact",
+  "first_checkpoint": "One real loader-to-summary boundary test passes; provide SHA, command, exit code and raw log.",
+  "counterexamples": ["Valid input outside the authorized physical date range", "Missing native event is not a zero cashflow"],
+  "stage": {"id": "MF-001-S04", "max_seconds": 57600, "max_rounds": 4}
+}
+```
+
+Compact progress has exactly `completed`, `checks`, `blockers`, `next_step`,
+`needs_guidance`, `candidate_commit` (exact SHA or null). No seven-section Markdown
+is required for a checkpoint. Complete/help/blocked deliveries still use the frozen
+full summary templates. The relay renders a short stage summary from the supplied
+claims and binds its hash; it never manufactures facts or decides whether reading
+or a check satisfies the goal. Receiving Codex judges the first outcome from raw
+evidence before commissioning another attempt. Publish one executable contract,
+named boundary counterexamples and necessary code pointers, rather than asking an
+implementer to resolve conflicting historical drafts.
+
+At a safe tool boundary Pi reports before starting another implementation step.
+Status distinguishes RPC acknowledgement, the checkpoint user-message observed on
+the agent event stream, and a valid report; observation is not proof the model
+understood the instruction. Their latencies are separate. The five-minute grace,
+30-minute cadence and 90-minute process cap are unchanged. No valid response still
+freezes at a safe boundary; late reports do not unlock a violation.
+
+Tasks with the same stage ID must use identical stage authorization and workspace.
+The relay counts persisted implementation dispatches across IDs, including failures
+and external starts. Their first execution anchors a shared cutoff; explicit earlier
+`deadline_utc` remains binding. Review/guidance consume time but no implementation
+round. `status.stage` shows members, used/remaining rounds and remaining seconds;
+per-task caps still apply. Increasing a task allowance cannot extend the frozen stage.
+Existing ungrouped tasks are not retroactively assigned a stage. This is budget
+bookkeeping, not a research scheduler, and stage identity is scoped to one state root.
+
+For authorized main-Codex implementation, publish a successor with
+`"implementation": "external"`, the same shared stage and a frozen handoff/baseline.
+It waits in `external_ready`, starting neither a model nor its clock. After preflight:
+
+```text
+codinator --state-dir /absolute/state begin-external TASK_ID
+# Main Codex reads the returned frozen instructions, implements, commits and checks.
+# Use the exact returned bound delivery command with summary and evidence.
+codinator --state-dir /absolute/state finish-external TASK_ID
+```
+
+Beginning consumes an implementation round and records the author/deadline. A
+checkout ownership record blocks other controller dispatch/publication, including
+other state roots. The bound message author is `main_codex`, not Pi. Finished work
+queues a read-only non-author review under the same contract and shared budget;
+only that review can accept. A rework verdict queues `external_ready` for the author;
+it never silently dispatches Pi. Review-only retry pins original external evidence.
+No source snapshot, Git operation or project command is performed by the relay.
+
+The host Codex harness must enforce its own hard limit and checkpoint cadence; the
+relay cannot kill that host session. It rejects overdue review intake and keeps the
+checkout occupied until the author explicitly confirms all tools have stopped. If
+overdue or an immutable packet cannot be reconciled, preserve it and release safely:
+
+```text
+codinator --state-dir /absolute/state stop-external TASK_ID --summary /path/stopped.md
+```
+
+The stop summary uses all full summary headings. It records blocked, never accepted,
+and preserves previous deliveries. Normal pause/cancel refuses an active external
+writer; time expiry does not prove tools stopped. Reviewer verifies actual Git,
+scope, before/after identity, raw external command/check logs and independently
+reruns every required check. Missing original evidence blocks acceptance.
+
+S03's existing paused/blocked records and native independent review remain historical
+evidence. These additions do not import an arbitrary handwritten acceptance or
+rewrite frozen manifests. Fake-agent/fault tests establish local protocol behavior;
+real Pi/S04 workflow improvement still needs a bounded pilot.

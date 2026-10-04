@@ -6,6 +6,7 @@ from .files import Problem, file_info
 from .delivery import selected_delivery, validate_delivery, _read, _json
 from .handoff import enabled, verify_protocol
 from .process import process_start
+from .stages import stage_status
 
 
 def report(store, task):
@@ -19,9 +20,15 @@ def report(store, task):
                   process_alive=bool(task['pid'] and task['pid_start']
                                      and process_start(task['pid']) == task['pid_start']),
                   latest_review=None)
+    shared = stage_status(store, task['manifest'])
+    if shared is not None:
+        result['stage'] = shared
+    if task['manifest'].get('implementation') == 'external':
+        result['implementation_author'] = 'main_codex'
+        result['external_instructions'] = str(attempt / 'external-instructions.md') if task['attempt'] else None
     terminal = task['state'] in ('accepted', 'cancelled')
     stopped = task['state'] in ('paused', 'blocked', 'cancelled')
-    result['current_handler'] = (None if terminal else 'main_codex' if stopped else
+    result['current_handler'] = (None if terminal else 'main_codex' if stopped or task['state'] in ('external_ready', 'external_implementing') else
                                  'guidance_codex' if task['state'] == 'guiding' else
                                  'review_codex' if task['state'] in ('reviewing', 'review_ready') else 'pi')
     result['pending_reply_to'] = None

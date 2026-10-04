@@ -40,7 +40,8 @@ def load_manifest(path):
     raw = json.loads(Path(path).read_text())
     allowed_keys = {"version", "id", "workspace", "handoff", "allowed_paths", "checks", "excludes",
                     "max_rounds", "max_seconds", "attempt_seconds", "checkpoint_seconds", "deadline_utc",
-                    "notify_thread", "integration", "git", "handoff_protocol"}
+                    "notify_thread", "integration", "git", "handoff_protocol",
+                    "checkpoint_format", "first_checkpoint", "counterexamples", "stage", "implementation"}
     if type(raw) is not dict or set(raw) - allowed_keys:
         raise Problem("Unknown manifest field(s)")
     if raw.get("version") not in (1, 2) or type(raw.get("version")) is not int:
@@ -48,6 +49,25 @@ def load_manifest(path):
     if 'handoff_protocol' in raw:
         if raw['version'] != 2 or type(raw['handoff_protocol']) is not int or raw['handoff_protocol'] != 1:
             raise Problem('handoff_protocol requires version 2 and integer protocol version 1')
+    if 'checkpoint_format' in raw:
+        if raw['checkpoint_format'] != 'compact' or raw.get('handoff_protocol') != 1:
+            raise Problem('compact checkpoints require handoff_protocol 1')
+        if 'checkpoint_seconds' not in raw:
+            raise Problem('compact checkpoints require checkpoint_seconds')
+        if not isinstance(raw.get('first_checkpoint'), str) or not raw['first_checkpoint'].strip():
+            raise Problem('compact checkpoints require a verifiable first_checkpoint goal and evidence')
+        examples = raw.get('counterexamples')
+        if type(examples) is not list or not examples or any(type(s) is not str or not s.strip() for s in examples):
+            raise Problem('compact checkpoints require nonempty counterexamples')
+    elif 'first_checkpoint' in raw or 'counterexamples' in raw:
+        raise Problem('first_checkpoint/counterexamples require compact checkpoints')
+    if 'implementation' in raw and (raw['implementation'] != 'external' or raw.get('handoff_protocol') != 1):
+        raise Problem('external implementation requires handoff_protocol 1')
+    if 'stage' in raw:
+        from .stages import validate_stage
+        validate_stage(raw['stage'])
+        if raw.get('handoff_protocol') != 1:
+            raise Problem('shared stages require handoff_protocol 1')
     if raw['version'] == 2:
         spec = raw.get('git')
         if type(spec) is not dict or set(spec) != {'branch', 'base_commit'}:
