@@ -418,3 +418,36 @@ class HarnessTests(unittest.TestCase):
         self.assertFalse(marker.exists())
         self.assertEqual(self.store.get('external')['state'], 'review_ready')
         self.assertEqual(stage_status(self.store, m)['rounds_used'], 1)
+
+    def test_external_hardlinked_raw_log_is_refused_before_review_selection(self):
+        m, source, _ = self.external_delivery()
+        artifacts = json.loads((source / 'author-artifacts.json').read_text())
+        log = Path(artifacts['commands'])
+        alias = self.base / 'writable-alias.log'
+        os.link(log, alias)
+        with self.assertRaisesRegex(Problem, 'hardlink alias'):
+            finish(self.engine, 'external', source / 'author-artifacts.json')
+        self.assertEqual(self.store.get('external')['state'], 'external_implementing')
+        self.assertTrue(external_marker(m).exists())
+        self.assertFalse((source / 'delivery-selection.json').exists())
+
+    def test_malformed_owner_is_a_protocol_error_not_silent_queue_wait(self):
+        m = self.publish('external', implementation='external')
+        begin(self.engine, 'external')
+        marker = external_marker(m)
+        self.addCleanup(lambda: marker.unlink(missing_ok=True))
+        original = json.loads(marker.read_text())
+        bad = ({}, [], original | {'extra': True}, original | {'task_id': 1},
+               original | {'task_id': ''}, original | {'state_dir': 'relative'},
+               original | {'state_dir': ''}, original | {'state_dir': 1})
+        try:
+            for owner in bad:
+                with self.subTest(owner=owner):
+                    marker.write_text(json.dumps(owner))
+                    with self.assertRaisesRegex(Problem, 'Invalid external ownership'):
+                        self.engine.run('test')
+                    self.assertTrue(marker.exists())
+                    self.assertIsNone(self.store.get('test')['started'])
+                    self.assertEqual(self.store.get('external')['state'], 'external_implementing')
+        finally:
+            marker.write_text(json.dumps(original))

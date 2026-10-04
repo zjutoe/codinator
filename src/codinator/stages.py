@@ -2,6 +2,7 @@
 import json
 import re
 import time
+from pathlib import Path
 from .files import Problem
 from .config import deadline_timestamp, positive
 
@@ -76,18 +77,35 @@ class ExternalBusy(Problem):
     """Expected queue contention, distinct from corrupt ownership evidence."""
 
 
+def external_owner(marker):
+    from .delivery import _read
+    try:
+        owner = json.loads(_read(marker))
+    except ValueError as exc:
+        raise Problem('Invalid external ownership JSON') from exc
+    if (type(owner) is not dict or set(owner) != {'state_dir', 'task_id'}
+            or type(owner['state_dir']) is not str or not owner['state_dir']
+            or type(owner['task_id']) is not str
+            or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,79}', owner['task_id'])):
+        raise Problem('Invalid external ownership record')
+    directory = Path(owner['state_dir'])
+    if not directory.is_absolute() or directory.resolve() != directory or marker.stat().st_nlink != 1:
+        raise Problem('Invalid external ownership path or hardlink')
+    return owner
+
+
 def release_external(store, task, message, **fields):
     # A durable release authorization precedes unlink. Recovery never infers a
     # host process stopped merely from expiry or a missing process ID.
+    marker = external_marker(task['manifest'])
+    present = marker.exists() or marker.is_symlink()
+    if present and external_owner(marker) != {'state_dir': str(store.root), 'task_id': task['id']}:
+        raise Problem('Cannot release another external owner')
     with store.db:
         store.event(task['id'], 'external_release', {'attempt': task['attempt']})
         store._update(task['id'], fields)
         store._notify(task['id'], message)
-    marker = external_marker(task['manifest'])
-    if marker.exists() or marker.is_symlink():
-        from .delivery import _read
-        if json.loads(_read(marker)) != {'state_dir': str(store.root), 'task_id': task['id']}:
-            raise Problem('Cannot release another external owner')
+    if present:
         marker.unlink()
 
 
@@ -102,8 +120,7 @@ def recover_external(store, task):
     marker = external_marker(task['manifest'])
     if not marker.exists() and not marker.is_symlink():
         return
-    from .delivery import _read
-    owner = json.loads(_read(marker))
+    owner = external_owner(marker)
     if owner != {'state_dir': str(store.root), 'task_id': task['id']}:
         return
     if task['state'] == 'external_implementing':
@@ -120,8 +137,7 @@ def require_external_idle(store, manifest, task_id=None):
         return
     marker = external_marker(manifest)
     if marker.exists() or marker.is_symlink():
-        from .delivery import _read
-        owner = json.loads(_read(marker))
+        owner = external_owner(marker)
         if owner != {'state_dir': str(store.root), 'task_id': task_id}:
             raise ExternalBusy('External implementation in another task/state directory owns this checkout')
     for task in store.tasks():

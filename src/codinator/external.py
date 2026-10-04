@@ -205,6 +205,8 @@ def read_artifacts(manifest, inventory, *, directory, pinned=False):
         path = Path(raw_path)
         if not path.is_absolute() or path.resolve() != path or path.is_relative_to(workspace) or not path.is_relative_to(directory):
             raise Problem('External raw artifacts must be unlinked files inside the source attempt, outside source/Git')
+        if path.lstat().st_nlink != 1:
+            raise Problem('External raw artifact has a hardlink alias: ' + name)
         _read(path)  # bounded regular file, no symlinks
         info = {'path': str(path), 'identity': file_info(path)}
         if pinned and info != entry:
