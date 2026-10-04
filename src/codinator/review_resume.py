@@ -55,15 +55,18 @@ def checkpoint(store, task, sandbox, *, accepted=False):
         return document(name + '/launch.json')
 
     # State proves dispatch reached review, not that project checks or Git were verified.
-    attempt, entered_review, entered_repair = 0, False, False
+    attempt, entered_review, entered_repair, external_delivered = 0, False, False, False
     for row in store.db.execute("SELECT payload FROM events WHERE task_id=? AND kind='state' ORDER BY seq", (task['id'],)):
         fields = json.loads(row[0])
         attempt = fields.get('attempt', attempt)
         if attempt == number and fields.get('state') == 'reviewing' and fields.get('phase') == 'codex':
             entered_review = True
+        if attempt == number and fields.get('state') == 'review_ready' and fields.get('phase') == 'external-delivered':
+            external_delivered = True
         if attempt == number and fields.get('state') == 'checking' and fields.get('phase') == 'delivery-repair':
             entered_repair = True
-    if not entered_review:
+    external = task['manifest'].get('implementation') == 'external'
+    if not entered_review and not (external and (external_delivered or task['state'] == 'external_implementing')):
         raise Problem('No controller checkpoint proving this attempt reached review')
     if not accepted:
         require_unfinished_review(source)
@@ -106,7 +109,22 @@ def checkpoint(store, task, sandbox, *, accepted=False):
         if not (ack and settled and stop == 'stop'):
             raise Problem('Pi completion protocol evidence is missing or unsuccessful')
 
-    successful_pi()
+    if external:
+        record = document('external-completion.json')
+        completion_files = {name: file_info(source / name) for name in
+                            ('before.json', 'submission.json', 'delivery-selection.json',
+                             'delivery/summary.md', 'delivery/completion.json', 'delivery/evidence.json')}
+        if (record.get('author') != 'main_codex' or record.get('files') != completion_files
+                or record.get('candidate_commit') != fingerprint):
+            raise Problem('External implementation evidence changed or identity mismatch')
+        from .external import read_artifacts
+        raw = read_artifacts(manifest, record.get('artifacts'), directory=source, pinned=True)
+        for label, entry in raw.items():
+            files['external-raw/' + label] = entry
+        evidence('external-instructions.md')
+        evidence('external-start.json')
+    else:
+        successful_pi()
     delivery = selected_delivery(source)
     if delivery != source / 'delivery':
         if not entered_repair:
@@ -132,8 +150,9 @@ def checkpoint(store, task, sandbox, *, accepted=False):
         evidence('../handoff-protocol.json')
         for entry in record['templates'].values():
             evidence('../' + entry['path'])
-        evidence('pi-templates.json')
-    evidence('worker-prompt.txt')
+        evidence('main_codex-templates.json' if external else 'pi-templates.json')
+    if not external:
+        evidence('worker-prompt.txt')
     result = {'source_attempt': number, 'source_round': task['round'],
               'submission_digest': fingerprint, 'files': files}
     if previous is not None and result != previous:

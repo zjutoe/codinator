@@ -11,3 +11,6 @@
 - No unsandboxed fallback. Inspect actual process exit and protocol completion. Keep models fixed by the contract; never silently switch them.
 - Changes to lifecycle, persistence or isolation require meaningful fault-injection tests and non-author review. Mock/fake-agent tests are not real model connectivity evidence.
 - Store credentials and raw runtime outside this repository; never print authentication contents. Keep the implementation small and standard-library based.
+
+- For new compact-checkpoint tasks, main Codex declares a concrete first behavioral outcome and named counterexamples. Pi reports short structured progress before more work at a safe boundary; the receiving Codex judges evidence, not activity or format compliance. Full final/help/stop summaries remain mandatory. Prepare permissions and dependencies before starting the budget.
+- Work packages in one logical stage share a published stage allowance. Never reset time/rounds through new IDs. Authorized main-Codex implementation uses the external handoff protocol and local Git; only a non-author relay review accepts. Host Codex owns its process limits and must explicitly confirm stopped tools before releasing the checkout. Preserve original external logs, refs and check order; do not fabricate Pi completion or import handwritten acceptance.

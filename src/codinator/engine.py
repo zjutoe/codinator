@@ -13,6 +13,7 @@ from .process import Interrupted, process_start, stop_group
 from .review_resume import checkpoint, require_unfinished_review
 from .sandbox import Sandbox
 from .store import lock
+from .stages import deadline_for, require_round, require_external_idle, ExternalBusy, recover_external
 
 
 LEGACY = 'Version 1 tasks are read-only history; prepare an explicit version 2 successor with preserved budget accounting'
@@ -50,7 +51,7 @@ def _dispatched_round(store, task_id):
             "SELECT payload FROM events WHERE task_id=? AND kind='state' ORDER BY seq", (task_id,)):
         fields = json.loads(row[0])
         round_number = fields.get('round', round_number)
-        if fields.get('state') == 'implementing' and fields.get('phase') == 'pi':
+        if (fields.get('state'), fields.get('phase')) in (('implementing', 'pi'), ('external_preparing', 'external'), ('external_implementing', 'external')):
             used = round_number
     return used
 
@@ -88,6 +89,9 @@ class Engine:
     def recover(self):
         """Called under controller.lock; never replay prompts or repair source."""
         for task in self.store.tasks():
+            if task['manifest'].get('implementation') == 'external':
+                with lock(_repo_lock(task['manifest'])):
+                    recover_external(self.store, task)
             if task['state'] not in ('implementing', 'checking', 'reviewing', 'guiding', 'integrating') and not task['pid']:
                 continue
             _require_current(task)
@@ -115,6 +119,10 @@ class Engine:
             if task['state'] not in ('ready', 'review_ready', 'needs_changes'):
                 raise Problem(f"Task is {task['state']}; cannot dispatch")
             with lock(_repo_lock(task['manifest'])):
+                try:
+                    require_external_idle(self.store, task['manifest'], task_id)
+                except ExternalBusy:
+                    return  # Wait without starting this task's clock/round or stopping serve.
                 self._loop(task_id)
 
     def _loop(self, task_id):
@@ -125,13 +133,10 @@ class Engine:
             if task['control']:
                 self.store.update(task_id, state='paused' if task['control'] == 'pause' else 'cancelled', control=None)
                 return
-            if task['deadline'] is None:
-                now = time.time()
-                deadline = now + m['max_seconds']
-                if 'deadline_utc' in m:
-                    deadline = min(deadline, deadline_timestamp(m['deadline_utc']))
-                self.store.update(task_id, started=now, deadline=deadline)
-                task = self.store.get(task_id)
+            now = time.time()
+            deadline = deadline_for(self.store, task, now)
+            self.store.update(task_id, started=task['started'] if task['started'] is not None else now, deadline=deadline)
+            task = self.store.get(task_id)
             try:
                 if enabled(m):
                     verify_protocol(self.store.root / 'tasks' / task_id, m)
@@ -151,6 +156,8 @@ class Engine:
                     current = self.store.get(task_id)
                     if current['state'] not in ('ready', 'review_ready', 'needs_changes') or current['control']:
                         return
+                    if not review_only:
+                        require_round(self.store, m)
                     self.store.update(task_id, attempt=task['attempt'] + 1,
                                       state='reviewing' if review_only else 'implementing',
                                       phase='codex' if review_only else 'pi', reason='')
@@ -253,9 +260,11 @@ class Engine:
                         raise Problem(verdict['summary'])
                     if task['round'] >= m['max_rounds']:
                         raise Problem('Automatic rework round budget exhausted; ' + feedback)
-                    self.store.update(task_id, state='needs_changes', round=task['round'] + 1, phase='queued',
+                    self.store.update(task_id, state='external_ready' if m.get('implementation') == 'external' else 'needs_changes', round=task['round'] + 1, phase='queued',
                                       feedback=feedback, last_issues=json.dumps(sorted(i['id'] for i in verdict['issues'])),
                                       review_resume=None)
+                    if m.get('implementation') == 'external':
+                        return
             except (Problem, OSError, ValueError, KeyboardInterrupt) as exc:
                 with self.store.db:
                     self.store.db.execute('BEGIN IMMEDIATE')
@@ -319,6 +328,10 @@ class Engine:
                         round_number = max(round_number, used + 1)
                         if round_number > task['manifest']['max_rounds']:
                             raise Problem('Implementation round budget exhausted; resume refused')
-                self.store.update(task_id, state='review_ready' if review_only else 'ready', review_resume=pinned,
+                deadline = deadline_for(self.store, task | {'deadline': deadline}, time.time()) if deadline is not None else None
+                if not review_only:
+                    require_round(self.store, task['manifest'])
+                self.store.update(task_id, state='review_ready' if review_only else
+                                  'external_ready' if task['manifest'].get('implementation') == 'external' else 'ready', review_resume=pinned,
                                   control=None, reason='', deadline=deadline, attempt_seconds_override=override,
                                   feedback=feedback, round=round_number)

@@ -91,8 +91,13 @@ class Store:
         now = time.time()
         try:
             with self.db:
-                self.db.execute("INSERT INTO tasks(id,manifest,state,expected_digest,created,updated) VALUES(?,?,'ready',?,?,?)",
-                                (manifest["id"], json.dumps(manifest), fingerprint, now, now))
+                self.db.execute('BEGIN IMMEDIATE')
+                from .stages import stage_status, require_external_idle
+                stage_status(self, manifest)
+                require_external_idle(self, manifest)
+                initial_state = 'external_ready' if manifest.get('implementation') == 'external' else 'ready'
+                self.db.execute("INSERT INTO tasks(id,manifest,state,expected_digest,created,updated) VALUES(?,?,?,?,?,?)",
+                                (manifest["id"], json.dumps(manifest), initial_state, fingerprint, now, now))
                 self.event(manifest["id"], "submitted", {"digest": fingerprint})
         except sqlite3.IntegrityError:
             raise Problem("Task id already exists; submission is never overwritten") from None
@@ -109,6 +114,8 @@ class Store:
             task = self.get(task_id)
             if task['manifest']['version'] != 2:
                 raise Problem('Version 1 tasks are read-only history; use the old service to stop any old active process before upgrading')
+            if task['state'] in ('external_preparing', 'external_implementing'):
+                raise Problem('External owner must stop its tools and complete a blocked handoff before pause/cancel')
             if task['state'] in ('accepted', 'cancelled'):
                 raise Problem('Task already terminal')
             if task['state'] in ('implementing', 'checking', 'reviewing', 'guiding', 'integrating'):

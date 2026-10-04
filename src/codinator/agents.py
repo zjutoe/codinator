@@ -54,6 +54,8 @@ class PiProtocol:
 
     def event(self, event, send):
         kind = event.get("type")
+        if self.checkpoints:
+            self.checkpoints.message_observed(event)
         if kind == 'response' and self.checkpoints and self.checkpoints.response(event):
             return False
         if kind == 'response' and self.closeout and self.closeout.response(event):
@@ -218,7 +220,12 @@ For blocked work use --status blocked; do not invent a commit or test result to 
                          'Each request requires a valid progress report within five minutes. completed/checks '
                          'may be empty; honestly record blockers. Progress is not completion and never extends '
                          'the hard budget.\n')
-        if enabled(manifest):
+        if manifest.get('checkpoint_format') == 'compact':
+            instructions += ('Compact progress uses candidate_commit (exact SHA or null), not a Markdown summary. '
+                             'At a safe boundary, submit progress before starting another implementation step.\n'
+                             f'First checkpoint outcome/evidence: {manifest["first_checkpoint"]}\n'
+                             f'Boundary counterexamples: {json.dumps(manifest["counterexamples"], ensure_ascii=False)}\n')
+        elif enabled(manifest):
             instructions += ('Reports include a summary string using the frozen summary template. '
                              'needs_guidance=true requests a bounded final help delivery and graceful stop; '
                              'submit needs_guidance through the DELIVERY tool. Missing reports/final delivery '
@@ -411,6 +418,9 @@ Before your final verdict recheck HEAD, branch and clean state; reject a differe
 with the same tree, a dirty source, or checks for another SHA. Your workspace and Git are
 read-only. Only your independent verdict may accept work.
 """
+    if manifest.get('implementation') == 'external':
+        source_instructions = source_instructions.replace("Pi's initial git show-ref tool evidence", "the external author's original git show-ref evidence")
+        source_instructions += "\nExternal main Codex implementation, not a Pi process. Read external-completion.json and external-instructions.md. Read every original raw artifact identified and hash-bound in external-completion.json artifacts. Verify original command/log references from the evidence packet, including before/after Git identities and commit-before-check ordering. Missing evidence is a blocker; never manufacture Pi runtime/process completion or trust a handwritten acceptance.\n"
     prompt = f"""Act as the independent Codex reviewer for task {manifest['id']}.
 Use gpt-6-astra with xhigh reasoning. You did not implement this code.
 Published requirements: {attempt_dir.parent / 'handoff.md'}.
