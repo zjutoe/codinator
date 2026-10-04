@@ -69,7 +69,7 @@ def report(store, task):
             if errors or type(value) is not dict or type(value.get('message')) is not dict:
                 raise Problem('Invalid pending guidance request')
             result['pending_reply_to'] = value['message']['message_id']
-    if enabled(task['manifest']) and task['state'] in ('ready', 'needs_changes') and task['feedback']:
+    if enabled(task['manifest']) and task['state'] in ('ready', 'needs_changes', 'external_ready') and task['feedback']:
         feedback = json.loads(task['feedback'])
         if type(feedback) is not dict or type(feedback.get('message')) is not dict:
             raise Problem('Invalid queued protocol reply')
@@ -114,6 +114,9 @@ def report(store, task):
     result['next_action'] = (
         'none' if task['state'] in ('accepted', 'cancelled') else
         'prepare_v2_successor_preserving_budget' if task['manifest']['version'] == 1 else
+        'begin-external' if task['state'] == 'external_ready' else
+        'finish-external_or_stop-external_after_tools_stop' if task['state'] == 'external_implementing' else
+        'recover_interrupted_external_preparation' if task['state'] == 'external_preparing' else
         'inspect_evidence_before_explicit_resume' if task['state'] in ('paused', 'blocked') else
         'ensure_service_running_then_monitor')
     return result

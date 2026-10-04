@@ -13,7 +13,7 @@ from .process import Interrupted, process_start, stop_group
 from .review_resume import checkpoint, require_unfinished_review
 from .sandbox import Sandbox
 from .store import lock
-from .stages import deadline_for, require_round, require_external_idle
+from .stages import deadline_for, require_round, require_external_idle, ExternalBusy, recover_external
 
 
 LEGACY = 'Version 1 tasks are read-only history; prepare an explicit version 2 successor with preserved budget accounting'
@@ -51,7 +51,7 @@ def _dispatched_round(store, task_id):
             "SELECT payload FROM events WHERE task_id=? AND kind='state' ORDER BY seq", (task_id,)):
         fields = json.loads(row[0])
         round_number = fields.get('round', round_number)
-        if (fields.get('state'), fields.get('phase')) in (('implementing', 'pi'), ('external_implementing', 'external')):
+        if (fields.get('state'), fields.get('phase')) in (('implementing', 'pi'), ('external_preparing', 'external'), ('external_implementing', 'external')):
             used = round_number
     return used
 
@@ -89,6 +89,9 @@ class Engine:
     def recover(self):
         """Called under controller.lock; never replay prompts or repair source."""
         for task in self.store.tasks():
+            if task['manifest'].get('implementation') == 'external':
+                with lock(_repo_lock(task['manifest'])):
+                    recover_external(self.store, task)
             if task['state'] not in ('implementing', 'checking', 'reviewing', 'guiding', 'integrating') and not task['pid']:
                 continue
             _require_current(task)
@@ -116,7 +119,10 @@ class Engine:
             if task['state'] not in ('ready', 'review_ready', 'needs_changes'):
                 raise Problem(f"Task is {task['state']}; cannot dispatch")
             with lock(_repo_lock(task['manifest'])):
-                require_external_idle(self.store, task['manifest'], task_id)
+                try:
+                    require_external_idle(self.store, task['manifest'], task_id)
+                except ExternalBusy:
+                    return  # Wait without starting this task's clock/round or stopping serve.
                 self._loop(task_id)
 
     def _loop(self, task_id):

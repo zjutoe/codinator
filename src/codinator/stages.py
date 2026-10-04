@@ -33,15 +33,16 @@ def stage_status(store, manifest):
     if started is not None:
         ceilings.append(started + spec['max_seconds'])
     deadline = min(ceilings) if ceilings else None
-    used = 0
+    used = set()
     for task in members:
         for row in store.db.execute("SELECT payload FROM events WHERE task_id=? AND kind='state'", (task['id'],)):
             event = json.loads(row[0])
             if ((event.get('state'), event.get('phase')) in
-                    (('implementing', 'pi'), ('external_implementing', 'external'))):
-                used += 1
-    return {**spec, 'started': started, 'deadline': deadline, 'rounds_used': used,
-            'rounds_remaining': max(0, spec['max_rounds'] - used),
+                    (('implementing', 'pi'), ('external_preparing', 'external'),
+                     ('external_implementing', 'external'))):
+                used.add((task['id'], event.get('attempt')))
+    return {**spec, 'started': started, 'deadline': deadline, 'rounds_used': len(used),
+            'rounds_remaining': max(0, spec['max_rounds'] - len(used)),
             'seconds_remaining': max(0, deadline - time.time()) if deadline is not None else None,
             'members': [{'id': t['id'], 'state': t['state'], 'attempt': t['attempt']} for t in members]}
 
@@ -71,6 +72,49 @@ def external_marker(manifest):
     return _repo_lock(manifest).with_suffix('.external.json')
 
 
+class ExternalBusy(Problem):
+    """Expected queue contention, distinct from corrupt ownership evidence."""
+
+
+def release_external(store, task, message, **fields):
+    # A durable release authorization precedes unlink. Recovery never infers a
+    # host process stopped merely from expiry or a missing process ID.
+    with store.db:
+        store.event(task['id'], 'external_release', {'attempt': task['attempt']})
+        store._update(task['id'], fields)
+        store._notify(task['id'], message)
+    marker = external_marker(task['manifest'])
+    if marker.exists() or marker.is_symlink():
+        from .delivery import _read
+        if json.loads(_read(marker)) != {'state_dir': str(store.root), 'task_id': task['id']}:
+            raise Problem('Cannot release another external owner')
+        marker.unlink()
+
+
+def recover_external(store, task):
+    if task['manifest'].get('implementation') != 'external':
+        return
+    if task['state'] == 'external_preparing':
+        release_external(store, task, 'Interrupted preparation; no external instructions delivered',
+                         state='blocked', phase='external-preparation-failed',
+                         reason='Inspect preparation evidence before explicit resume')
+        return
+    marker = external_marker(task['manifest'])
+    if not marker.exists() and not marker.is_symlink():
+        return
+    from .delivery import _read
+    owner = json.loads(_read(marker))
+    if owner != {'state_dir': str(store.root), 'task_id': task['id']}:
+        return
+    if task['state'] == 'external_implementing':
+        return  # Active or uncertain native author: only explicit stopped handoff releases.
+    released = any(json.loads(r[0]) == {'attempt': task['attempt']} for r in store.db.execute(
+        "SELECT payload FROM events WHERE task_id=? AND kind='external_release'", (task['id'],)))
+    if not released:
+        raise Problem('External ownership has no durable release authorization; inspect original evidence')
+    marker.unlink()
+
+
 def require_external_idle(store, manifest, task_id=None):
     if manifest['version'] != 2:
         return
@@ -79,8 +123,8 @@ def require_external_idle(store, manifest, task_id=None):
         from .delivery import _read
         owner = json.loads(_read(marker))
         if owner != {'state_dir': str(store.root), 'task_id': task_id}:
-            raise Problem('External implementation in another task/state directory owns this checkout')
+            raise ExternalBusy('External implementation in another task/state directory owns this checkout')
     for task in store.tasks():
         if (task['id'] != task_id and task['manifest']['workspace'] == manifest['workspace']
-                and task['state'] == 'external_implementing'):
-            raise Problem('External implementation owns this checkout; confirm its stop and complete its handoff first')
+                and task['state'] in ('external_preparing', 'external_implementing')):
+            raise ExternalBusy('External implementation owns this checkout; confirm its stop and complete its handoff first')

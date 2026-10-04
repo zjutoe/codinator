@@ -114,7 +114,7 @@ class Store:
             task = self.get(task_id)
             if task['manifest']['version'] != 2:
                 raise Problem('Version 1 tasks are read-only history; use the old service to stop any old active process before upgrading')
-            if task['state'] == 'external_implementing':
+            if task['state'] in ('external_preparing', 'external_implementing'):
                 raise Problem('External owner must stop its tools and complete a blocked handoff before pause/cancel')
             if task['state'] in ('accepted', 'cancelled'):
                 raise Problem('Task already terminal')

@@ -117,6 +117,10 @@ def checkpoint(store, task, sandbox, *, accepted=False):
         if (record.get('author') != 'main_codex' or record.get('files') != completion_files
                 or record.get('candidate_commit') != fingerprint):
             raise Problem('External implementation evidence changed or identity mismatch')
+        from .external import read_artifacts
+        raw = read_artifacts(manifest, record.get('artifacts'), directory=source, pinned=True)
+        for label, entry in raw.items():
+            files['external-raw/' + label] = entry
         evidence('external-instructions.md')
         evidence('external-start.json')
     else:

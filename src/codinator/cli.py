@@ -55,7 +55,10 @@ def main(argv=None):
             p.add_argument('--attempt-seconds', type=int, help='Override each Pi/Codex process timeout for this task; original manifest remains unchanged')
             p.add_argument('--review-only', action='store_true', help='Retry only an unfinished review of the unchanged checked submission')
     for name in ('begin-external', 'finish-external'):
-        sub.add_parser(name, help='Main Codex implementation handoff; never execute project work').add_argument('task')
+        p = sub.add_parser(name, help='Main Codex implementation handoff; never execute project work')
+        p.add_argument('task')
+        if name == 'finish-external':
+            p.add_argument('--artifacts', type=Path, help='Required raw Git/command/check log inventory for awaiting_review')
     p = sub.add_parser('stop-external', help='Author confirms stopped tools; preserve delivery and release checkout')
     p.add_argument('task')
     p.add_argument('--summary', required=True, type=Path)
@@ -129,7 +132,7 @@ def main(argv=None):
             if args.command == 'begin-external':
                 print(json.dumps(begin(engine, args.task), ensure_ascii=False))
             else:
-                finish(engine, args.task)
+                finish(engine, args.task, args.artifacts)
                 print(store.get(args.task)['state'] + ':', args.task)
         elif args.command == 'resume':
             if args.extra_seconds < 0:

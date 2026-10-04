@@ -2,6 +2,9 @@
 import contextlib
 import io
 import json
+import os
+from pathlib import Path
+import shutil
 import time
 import subprocess
 import unittest
@@ -153,9 +156,14 @@ class HarnessTests(unittest.TestCase):
         self.addCleanup(lambda: external_marker(m).unlink(missing_ok=True))
         task = self.store.get('external')
         context = self.engine.attempt_path(task)
+        return self.deliver_external(m, context)
+
+    def deliver_external(self, m, context):
+        task = self.store.get('external')
         (context / 'external-initial-refs.txt').write_text(self.git('show-ref'))
+        artifacts = {'before_git': str(context / 'external-initial-refs.txt')}
         (self.workspace / 'product.py').write_text('VALUE = 42\n')
-        self.git('add', 'product.py'); self.git('commit', '-qm', 'External author implementation')
+        self.git('add', 'product.py'); self.git('commit', '--allow-empty', '-qm', 'External author implementation')
         sha = self.git('rev-parse', 'HEAD')
         summary = self.base / 'summary.md'
         results = []
@@ -164,11 +172,17 @@ class HarnessTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             log = context / (check['name'] + '.author.stdout.log'); log.write_bytes(result.stdout)
             (context / (check['name'] + '.author.stderr.log')).write_bytes(result.stderr)
+            artifacts['check_' + check['name'] + '_stdout'] = str(log)
+            artifacts['check_' + check['name'] + '_stderr'] = str(context / (check['name'] + '.author.stderr.log'))
             results.append({'name': check['name'], 'argv': check['argv'], 'commit': sha,
                             'status': 'passed', 'exit_code': 0, 'evidence': str(log)})
+        after = context / 'external-final-refs.txt'; after.write_text(self.git('show-ref'))
+        commands = context / 'external-commands.log'; commands.write_text('Author commit ' + sha + '\nChecks: ' + json.dumps(results))
+        artifacts.update(after_git=str(after), commands=str(commands))
+        write_json(context / 'author-artifacts.json', artifacts)
         summary.write_text(document('summary', 'External candidate; real author check logs and refs: ' + str(context)))
         packet = {'version': 1, 'task_id': 'external', 'round': task['round'], 'attempt': task['attempt'],
-                  'git': {'branch': 'task', 'base_commit': m['git']['base_commit'], 'commit': sha},
+                  'git': {'branch': 'task', 'base_commit': task['expected_digest'], 'commit': sha},
                   'checks': results}
         evidence = self.base / 'evidence.json'; evidence.write_text(json.dumps(packet))
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
@@ -180,7 +194,7 @@ class HarnessTests(unittest.TestCase):
     def test_external_delivery_enters_real_fake_reviewer_without_pi_or_extra_round(self):
         m, source, sha = self.external_delivery()
         self.assertEqual(json.loads((source / 'delivery/completion.json').read_text())['message']['author'], 'main_codex')
-        finish(self.engine, 'external')
+        finish(self.engine, 'external', source / 'author-artifacts.json')
         self.assertEqual(self.store.get('external')['state'], 'review_ready')
         self.assertFalse(external_marker(m).exists())
         self.assertFalse((source / 'pi').exists())
@@ -201,7 +215,7 @@ class HarnessTests(unittest.TestCase):
         start = json.loads((source / 'external-start.json').read_text())
         with patch('codinator.external.time.time', return_value=start['implementation_deadline'] + 1):
             with self.assertRaisesRegex(Problem, 'budget exhausted'):
-                finish(self.engine, 'external')
+                finish(self.engine, 'external', source / 'author-artifacts.json')
         self.assertEqual(self.store.get('external')['state'], 'external_implementing')
         self.assertTrue(external_marker(m).exists())
         summary = self.base / 'stop-summary.md'; summary.write_text(document('summary', 'Tools stopped; overdue candidate unaccepted.'))
@@ -212,10 +226,195 @@ class HarnessTests(unittest.TestCase):
 
     def test_external_tampered_delivery_refuses_review_and_preserves_owner(self):
         m, source, _ = self.external_delivery()
-        finish(self.engine, 'external')
+        finish(self.engine, 'external', source / 'author-artifacts.json')
         (source / 'delivery/summary.md').write_text(document('summary', 'Changed after selection'))
         with patch('codinator.engine.reviewer') as reviewer:
             self.engine.run('external')
         reviewer.assert_not_called()
         self.assertEqual(self.store.get('external')['state'], 'blocked')
         self.assertIn('selection_mismatch', self.store.get('external')['reason'].lower())
+
+    def new_fixture(self):
+        case = HarnessTests('test_external_prepare_does_not_start_clock_or_dispatch_pi')
+        case.setUp()
+        self.addCleanup(case.doCleanups)
+        return case
+
+    def test_external_start_budget_cannot_be_extended_by_author_file(self):
+        m, source, _ = self.external_delivery()
+        start = json.loads((source / 'external-start.json').read_text())
+        changed = start | {'implementation_deadline': start['implementation_deadline'] + 60}
+        (source / 'external-start.json').write_text(json.dumps(changed))
+        with patch('codinator.external.time.time', return_value=start['implementation_deadline'] + 1):
+            with self.assertRaisesRegex(Problem, 'controller budget record'):
+                finish(self.engine, 'external', source / 'author-artifacts.json')
+        self.assertEqual(self.store.get('external')['state'], 'external_implementing')
+        self.assertTrue(external_marker(m).exists())
+
+    def test_external_preparation_crash_cuts_recover_without_replaying_or_resetting_rounds(self):
+        for cut in ('marker', 'before.json', 'external-start.json', 'contract', 'activate'):
+            with self.subTest(cut=cut):
+                case = self.new_fixture()
+                m = case.publish('external', implementation='external',
+                                 stage={'id': 'fault', 'max_seconds': 120, 'max_rounds': 2})
+                marker = external_marker(m)
+                case.addCleanup(lambda: marker.unlink(missing_ok=True))
+                import codinator.external as ext
+                original_once, original_write, original_update = ext._write_once, ext.write_json, case.store.update
+                def once(path, data):
+                    result = original_once(path, data)
+                    if cut == 'marker' and path == marker:
+                        raise SystemExit('crash after lease')
+                    return result
+                def write(path, data):
+                    result = original_write(path, data)
+                    if path.name == cut:
+                        raise SystemExit('crash after artifact')
+                    return result
+                def update(task_id, **fields):
+                    if cut == 'activate' and fields.get('state') == 'external_implementing':
+                        raise SystemExit('crash before handing instructions to host')
+                    return original_update(task_id, **fields)
+                with patch.object(ext, '_write_once', side_effect=once), \
+                     patch.object(ext, 'write_json', side_effect=write), \
+                     patch.object(case.store, 'update', side_effect=update), \
+                     patch.object(ext, 'prepare_contract', side_effect=SystemExit('crash contract')) if cut == 'contract' else contextlib.nullcontext():
+                    with self.assertRaises(SystemExit):
+                        begin(case.engine, 'external')
+                self.assertEqual(case.store.get('external')['state'], 'external_preparing')
+                deadline = case.store.get('external')['deadline']
+                case.engine.recover()
+                self.assertEqual(case.store.get('external')['state'], 'blocked')
+                self.assertFalse(marker.exists())
+                self.assertEqual(stage_status(case.store, m)['rounds_used'], 1)
+                self.assertEqual(case.store.get('external')['deadline'], deadline)
+
+    def test_external_recovery_keeps_unknown_active_host_but_releases_durable_stop(self):
+        m = self.publish('external', implementation='external')
+        begin(self.engine, 'external')
+        marker = external_marker(m)
+        self.addCleanup(lambda: marker.unlink(missing_ok=True))
+        self.engine.recover()
+        self.assertTrue(marker.exists())
+        self.assertEqual(self.store.get('external')['state'], 'external_implementing')
+        summary = self.base / 'stop.md'; summary.write_text(document('summary', 'All host tools stopped.'))
+        unlink = Path.unlink
+        def crash(path, *args, **kwargs):
+            if path == marker:
+                raise SystemExit('crash after durable release')
+            return unlink(path, *args, **kwargs)
+        with patch.object(Path, 'unlink', crash):
+            with self.assertRaises(SystemExit):
+                stop(self.engine, 'external', summary)
+        self.assertEqual(self.store.get('external')['state'], 'blocked')
+        self.assertTrue(marker.exists())
+        self.engine.recover()
+        self.assertFalse(marker.exists())
+
+    def test_external_raw_inventory_requires_every_file_and_refuses_links(self):
+        m, source, _ = self.external_delivery()
+        path = source / 'author-artifacts.json'
+        original = json.loads(path.read_text())
+        for label in original:
+            path.write_text(json.dumps({k: v for k, v in original.items() if k != label}))
+            with self.assertRaisesRegex(Problem, 'raw artifacts'):
+                finish(self.engine, 'external', path)
+        path.write_text(json.dumps(original))
+        log = Path(original['commands']); data = log.read_bytes(); log.unlink()
+        substitute = self.base / 'substitute.log'; substitute.write_bytes(data); log.symlink_to(substitute)
+        with self.assertRaisesRegex(Problem, 'unlinked'):
+            finish(self.engine, 'external', path)
+        self.assertTrue(external_marker(m).exists())
+
+    def test_external_all_raw_evidence_is_pinned_for_review_and_retry(self):
+        for label in ('before_git', 'after_git', 'commands', 'check_unit_stdout', 'check_unit_stderr'):
+            with self.subTest(label=label):
+                case = self.new_fixture()
+                _, source, _ = case.external_delivery()
+                finish(case.engine, 'external', source / 'author-artifacts.json')
+                raw = json.loads((source / 'external-completion.json').read_text())['artifacts']
+                Path(raw[label]['path']).write_text('changed after frozen delivery')
+                with patch('codinator.engine.reviewer') as reviewer:
+                    case.engine.run('external')
+                reviewer.assert_not_called()
+                self.assertEqual(case.store.get('external')['state'], 'blocked')
+                self.assertIn('raw artifact changed', case.store.get('external')['reason'])
+                with self.assertRaisesRegex(Problem, 'raw artifact changed'):
+                    case.engine.resume('external', review_only=True)
+
+    def test_external_queue_contention_keeps_serve_alive_without_starting_budget(self):
+        from codinator.cli import main
+        m = self.publish('external', implementation='external')
+        begin(self.engine, 'external')
+        self.addCleanup(lambda: external_marker(m).unlink(missing_ok=True))
+        other_workspace = self.base / 'unrelated-workspace'
+        shutil.copytree(self.workspace, other_workspace)
+        other = self.manifest | {'id': 'other', 'workspace': str(other_workspace)}
+        self.engine.submit(other)
+        with patch('codinator.cli.Store', return_value=self.store), \
+             patch('codinator.cli.Engine', return_value=self.engine), \
+             patch.object(self.engine, '_loop') as dispatch, \
+             patch('codinator.cli.time.sleep', side_effect=KeyboardInterrupt):
+            self.assertEqual(main(['--state-dir', str(self.store.root), 'serve']), 130)
+        dispatch.assert_called_once_with('other')
+        queued = self.store.get('test')
+        self.assertIsNone(queued['started']); self.assertEqual(queued['attempt'], 0)
+        other_store = Store(self.base / 'another-root'); self.addCleanup(other_store.db.close)
+        # Insert competing queued task before taking the lease to model existing publication.
+        with patch('codinator.stages.require_external_idle'):
+            other_store.add(self.manifest, self.manifest['git']['base_commit'])
+        competitor = test_engine.Engine(other_store, sandbox=self.engine.sandbox)
+        with patch.object(competitor, '_loop') as dispatch:
+            competitor.run('test')
+        dispatch.assert_not_called()
+        self.assertIsNone(other_store.get('test')['started'])
+        summary = self.base / 'stop.md'; summary.write_text(document('summary', 'Tools stopped.'))
+        stop(self.engine, 'external', summary)
+        with patch.object(self.engine, '_loop') as dispatch:
+            self.engine.run('test')
+        dispatch.assert_called_once_with('test')
+
+    def test_external_rework_passes_bound_feedback_and_preserves_stage_budget(self):
+        m, source, _ = self.external_delivery()
+        finish(self.engine, 'external', source / 'author-artifacts.json')
+        frozen = {p: p.read_bytes() for p in (source / 'delivery').iterdir()}
+        with patch.dict(os.environ, {'FAKE_MODE': 'no-progress'}):
+            self.engine.run('external')
+        task = self.store.get('external')
+        self.assertEqual(task['state'], 'external_ready')
+        feedback = json.loads(task['feedback'])
+        status = report(self.store, task)
+        self.assertEqual(status['pending_reply_to'], feedback['message']['message_id'])
+        self.assertEqual(status['next_action'], 'begin-external')
+        before_deadline = task['deadline']
+        receipt = begin(self.engine, 'external')
+        instructions = Path(receipt['instructions']).read_text()
+        self.assertIn(task['feedback'], instructions)
+        self.assertIn('manifest.json', instructions)
+        self.assertIn('round 2', instructions)
+        self.assertEqual(self.store.get('external')['deadline'], before_deadline)
+        self.assertEqual(stage_status(self.store, m)['rounds_used'], 2)
+        _, second_source, _ = self.deliver_external(m, self.engine.attempt_path(self.store.get('external')))
+        finish(self.engine, 'external', second_source / 'author-artifacts.json')
+        self.engine.run('external')
+        self.assertEqual(self.store.get('external')['state'], 'accepted')
+        self.assertEqual(stage_status(self.store, m)['rounds_used'], 2)
+        self.assertTrue(all(p.read_bytes() == data for p, data in frozen.items()))
+
+    def test_external_finish_crash_after_state_commit_releases_only_proven_stopped_lease(self):
+        m, source, _ = self.external_delivery()
+        marker = external_marker(m)
+        unlink = Path.unlink
+        def crash(path, *args, **kwargs):
+            if path == marker:
+                raise SystemExit('crash after review queue transaction')
+            return unlink(path, *args, **kwargs)
+        with patch.object(Path, 'unlink', crash):
+            with self.assertRaises(SystemExit):
+                finish(self.engine, 'external', source / 'author-artifacts.json')
+        self.assertEqual(self.store.get('external')['state'], 'review_ready')
+        self.assertTrue(marker.exists())
+        self.engine.recover()
+        self.assertFalse(marker.exists())
+        self.assertEqual(self.store.get('external')['state'], 'review_ready')
+        self.assertEqual(stage_status(self.store, m)['rounds_used'], 1)

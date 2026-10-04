@@ -420,7 +420,7 @@ read-only. Only your independent verdict may accept work.
 """
     if manifest.get('implementation') == 'external':
         source_instructions = source_instructions.replace("Pi's initial git show-ref tool evidence", "the external author's original git show-ref evidence")
-        source_instructions += "\nExternal main Codex implementation, not a Pi process. Read external-completion.json and external-instructions.md. Verify original command/log references from the evidence packet, including before/after Git identities and commit-before-check ordering. Missing evidence is a blocker; never manufacture Pi runtime/process completion or trust a handwritten acceptance.\n"
+        source_instructions += "\nExternal main Codex implementation, not a Pi process. Read external-completion.json and external-instructions.md. Read every original raw artifact identified and hash-bound in external-completion.json artifacts. Verify original command/log references from the evidence packet, including before/after Git identities and commit-before-check ordering. Missing evidence is a blocker; never manufacture Pi runtime/process completion or trust a handwritten acceptance.\n"
     prompt = f"""Act as the independent Codex reviewer for task {manifest['id']}.
 Use gpt-6-astra with xhigh reasoning. You did not implement this code.
 Published requirements: {attempt_dir.parent / 'handoff.md'}.

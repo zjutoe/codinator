@@ -279,7 +279,7 @@ def review():
                 or packet['git']['commit'] != fingerprint):
             reject('Candidate SHA does not match actual Git HEAD')
         if manifest.get('implementation') == 'external':
-            refs_event = {'stdout': (source / 'external-initial-refs.txt').read_text()}
+            refs_event = {'stdout': Path(json.loads((source / 'external-completion.json').read_text())['artifacts']['before_git']['path']).read_text()}
         else:
             pi_events = [json.loads(line) for line in (source / 'pi/stdout.jsonl').read_text().split('\n') if line]
             refs_event = next((e for e in pi_events if e.get('type') == 'fixture_refs'), None)

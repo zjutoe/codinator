@@ -434,7 +434,7 @@ implementer to resolve conflicting historical drafts.
 At a safe tool boundary Pi reports before starting another implementation step.
 Status distinguishes RPC acknowledgement, the checkpoint user-message observed on
 the agent event stream, and a valid report; observation is not proof the model
-understood the instruction. Their latencies are separate. The five-minute grace,
+understood the instruction. Status reports observation/report latency separately and records the RPC ack timestamp. The five-minute grace,
 30-minute cadence and 90-minute process cap are unchanged. No valid response still
 freezes at a safe boundary; late reports do not unlock a violation.
 
@@ -455,10 +455,27 @@ It waits in `external_ready`, starting neither a model nor its clock. After pref
 codinator --state-dir /absolute/state begin-external TASK_ID
 # Main Codex reads the returned frozen instructions, implements, commits and checks.
 # Use the exact returned bound delivery command with summary and evidence.
-codinator --state-dir /absolute/state finish-external TASK_ID
+codinator --state-dir /absolute/state finish-external TASK_ID --artifacts /path/artifacts.json
 ```
 
-Beginning consumes an implementation round and records the author/deadline. A
+For awaiting_review, `--artifacts` supplies an exact JSON object of absolute original
+raw-log paths: `before_git` and `after_git` (HEAD, branch, clean state and all refs),
+`commands` (commands, timestamps, exit codes and commit/check ordering), and for every
+check NAME, `check_NAME_stdout` and `check_NAME_stderr`. Store these bounded regular
+files (at most 1MB each) under the original attempt directory, outside source/Git.
+The reviewer mounts that attempt read-only. The relay pins paths and content hashes;
+missing, linked or subsequently changed logs prevent review/review-only reuse. Format
+and hashes establish integrity, not truth; the non-author still verifies raw evidence.
+A blocked delivery does not require this inventory.
+
+Beginning consumes an implementation round and records the author/deadline in
+controller-owned persistent events. Editing the exported start file cannot extend
+that deadline. Interrupted preparation is recoverable without replaying a prompt;
+`recover` removes only leases with proof no instructions were delivered or a durable
+explicit stopped-handoff record. It never treats expiry as proof of a stopped host.
+Already queued competing tasks wait without consuming budget or stopping `serve`;
+new incompatible publication is refused. External rework instructions include the
+bound previous review feedback, original scope/checks and review evidence paths. A
 checkout ownership record blocks other controller dispatch/publication, including
 other state roots. The bound message author is `main_codex`, not Pi. Finished work
 queues a read-only non-author review under the same contract and shared budget;
