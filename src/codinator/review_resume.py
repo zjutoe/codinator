@@ -55,16 +55,18 @@ def checkpoint(store, task, sandbox, *, accepted=False):
         return document(name + '/launch.json')
 
     # State proves dispatch reached review, not that project checks or Git were verified.
-    attempt, entered_review, entered_repair = 0, False, False
+    attempt, entered_review, entered_repair, external_delivered = 0, False, False, False
     for row in store.db.execute("SELECT payload FROM events WHERE task_id=? AND kind='state' ORDER BY seq", (task['id'],)):
         fields = json.loads(row[0])
         attempt = fields.get('attempt', attempt)
         if attempt == number and fields.get('state') == 'reviewing' and fields.get('phase') == 'codex':
             entered_review = True
+        if attempt == number and fields.get('state') == 'review_ready' and fields.get('phase') == 'external-delivered':
+            external_delivered = True
         if attempt == number and fields.get('state') == 'checking' and fields.get('phase') == 'delivery-repair':
             entered_repair = True
     external = task['manifest'].get('implementation') == 'external'
-    if not entered_review and not (external and task['state'] in ('external_implementing', 'review_ready')):
+    if not entered_review and not (external and (external_delivered or task['state'] == 'external_implementing')):
         raise Problem('No controller checkpoint proving this attempt reached review')
     if not accepted:
         require_unfinished_review(source)

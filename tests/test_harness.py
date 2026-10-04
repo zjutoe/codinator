@@ -218,4 +218,4 @@ class HarnessTests(unittest.TestCase):
             self.engine.run('external')
         reviewer.assert_not_called()
         self.assertEqual(self.store.get('external')['state'], 'blocked')
-        self.assertIn('changed', self.store.get('external')['reason'].lower())
+        self.assertIn('selection_mismatch', self.store.get('external')['reason'].lower())
