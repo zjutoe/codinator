@@ -427,11 +427,11 @@ class ObserveRealProcessTests(unittest.TestCase):
     """One real local subprocess: an active tool spans soft-check moments and the
     process still finishes without being interrupted by the observer."""
 
-    FAKE_AGENT = """
+    FAKE_AGENT = r"""
 import json, sys, time
 
 def emit(e):
-    sys.stdout.write(json.dumps(e, ensure_ascii=False) + "\\\\n")
+    sys.stdout.write(json.dumps(e, ensure_ascii=False) + "\n")
     sys.stdout.flush()
 
 STATE = {"model": {"provider": "bonsai", "id": "bonsai2-27b"},
