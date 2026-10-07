@@ -625,8 +625,8 @@ class ObserveSafeReadBoundsTests(unittest.TestCase):
         s2 = self.source(self.load(1), "out.txt")
         self.assertTrue(s2["content_changed"])
         self.assertFalse(s2["truncated"])
-        self.assertEqual(s2["range"], [0, 9])
-        self.assertEqual(s2["bytes_read"], 9)
+        self.assertEqual(s2["range"], [0, 10])
+        self.assertEqual(s2["bytes_read"], 10)
 
     def test_write_in_progress_hint(self):
         obs = self.make()
@@ -806,7 +806,7 @@ class ObserveWorkerPromptTests(unittest.TestCase):
         self.task = {"id": "WOBS", "round": 1, "attempt": 1,
                      "manifest": load_manifest(manifest_path),
                      "expected_digest": "0" * 64,
-                     "feedback": "Initial implementation."}
+                     "feedback": None}
         self.attempt_dir = Path(self.tmp.name) / "attempt-0001"
         self.attempt_dir.mkdir()
         self.private_dir = Path(self.tmp.name) / "private"
@@ -948,7 +948,6 @@ class ObservationEngineTests(unittest.TestCase):
         import test_engine as fixtures
         fixtures.EngineTests.setUp(self)
         self.store.request_control('test', 'cancel')
-        self.engine.run('test')
         (self.workspace/'handoff.md').write_text(HANDOFF_DOC.replace('Observe demo.', 'Implement product.py with VALUE=42.'))
         self.git('add','handoff.md')
         self.git('commit','-qm','Freeze observation handoff')

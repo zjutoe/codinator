@@ -34,6 +34,6 @@
   "checkpoint_seconds": 1800,
   "checkpoint_mode": "observe",
   "checkpoint_outputs": [
-    "tmp/progress.json"
+    "add.py"
   ]
 }

@@ -223,15 +223,19 @@ def status(context, task_id, attempt):
     if type(interval) is not int or interval <= 0 or type(contract.get('sources')) is not list:
         raise Problem(f'Invalid observation contract: {directory}')
     latest = latest_path = None
-    paths = sorted(directory.glob('record-*.json'))
+    try:
+        paths = sorted(directory.glob('record-*.json'), key=lambda p: int(p.stem.split('-', 1)[1]))
+    except ValueError as exc:
+        raise Problem(f'Invalid observation record name: {directory}') from exc
     for number, path in enumerate(paths):
         if path.name != f'record-{number:04d}.json':
             raise Problem(f'Observation sequence mismatch: {path}')
         value = _document(path)
-        if (_identity(value) != identity or value.get('checkpoint') != number
+        if (_identity(value) != identity or type(value.get('checkpoint')) is not int or value.get('checkpoint') != number
                 or value.get('mode') != 'observe' or value.get('version') != 1
                 or value.get('interval_seconds') != interval
                 or type(value.get('sources')) is not list
+                or any(type(s) is not dict for s in value['sources'])
                 or [{'base':s.get('base'), 'path':s.get('path')} for s in value['sources']] != contract['sources']):
             raise Problem(f'Observation record binding mismatch: {path}')
         for source in value['sources']:
