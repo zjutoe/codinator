@@ -28,12 +28,17 @@
       "timeout_seconds": 120
     }
   ],
-  "max_rounds": 2,
-  "max_seconds": 1800,
+  "max_rounds": 4,
+  "max_seconds": 57600,
   "attempt_seconds": 5400,
   "checkpoint_seconds": 1800,
   "checkpoint_mode": "observe",
   "checkpoint_outputs": [
     "add.py"
-  ]
+  ],
+  "stage": {
+    "id": "OUTPUT-OBSERVATION-DEMO",
+    "max_seconds": 57600,
+    "max_rounds": 4
+  }
 }

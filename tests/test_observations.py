@@ -971,3 +971,16 @@ class ObservationAdditionalConfigTests(ManifestBase):
         for path in ('not-created/', 'a//b.txt'):
             with self.subTest(path=path), self.assertRaises(Problem):
                 self.load(self.base(checkpoint_mode='observe', checkpoint_outputs=[path]))
+
+
+class ObservationExampleTests(ManifestBase):
+    def test_shipped_example_after_replacing_publication_identity(self):
+        example = Path(__file__).resolve().parents[1]/'examples/observation-task.json'
+        raw = json.loads(example.read_text())
+        raw.update(workspace=str(self.ws), handoff='docs/handoff.md')
+        loaded = self.load(raw)
+        self.assertEqual(loaded['checkpoint_mode'], 'observe')
+        self.assertEqual(loaded['checkpoint_seconds'], 1800)
+        self.assertEqual(loaded['attempt_seconds'], 5400)
+        self.assertEqual(loaded['stage']['max_seconds'], 57600)
+        self.assertGreater(loaded['max_seconds'], loaded['checkpoint_seconds'])

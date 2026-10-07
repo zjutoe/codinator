@@ -137,7 +137,7 @@ Codex 回答后，新 Pi attempt 实现加法函数，独立 Codex 复测并验�
 ## Passive output observations (recommended for new Pi tasks)
 
 New v2 Pi tasks with `handoff_protocol: 1` can use `checkpoint_mode: "observe"`
-and `checkpoint_seconds: 1800`. See [the example](examples/observation-task.json).
+and `checkpoint_seconds: 1800`. See [the example](../examples/observation-task.json).
 Keep the process hard limit at `attempt_seconds: 5400` and publish the shared stage
 budget as usual. Omission preserves the frozen report-based behavior. Observation
 does not support `implementation: "external"`, or the legacy `checkpoint_format`,
