@@ -8,12 +8,14 @@ from .files import Problem, file_info, write_json
 from .delivery import (prepare_contract, selected_delivery, message_binding, protocol_binding,
                        validate_message, _read, _json, DeliveryError)
 from .handoff import enabled, protocol_template, validate_document, verify_protocol
+from .observations import Observer
 from .process import run_process
 from .sandbox import codex_home, pi_home
 
 
 class PiProtocol:
-    def __init__(self, prompt, state_path, *, checkpoints=None, closeout=None):
+    def __init__(self, prompt, state_path, *, checkpoints=None, closeout=None,
+                 observer=None):
         self.prompt = prompt
         self.state_path = state_path
         self.pending = "state"
@@ -24,6 +26,7 @@ class PiProtocol:
         self.final_error = None
         self.checkpoints = checkpoints
         self.closeout = closeout
+        self.observer = observer
         self.active = False
         self.active_tools = set()
 
@@ -32,6 +35,8 @@ class PiProtocol:
             self.checkpoints.start(time.monotonic())
         if self.closeout:
             self.closeout.start(time.monotonic())
+        if self.observer:
+            self.observer.start(time.monotonic())
         send({"id": "state", "type": "get_state"})
 
     def observe(self, now):
@@ -39,6 +44,8 @@ class PiProtocol:
             self.checkpoints.observe(now)
         if self.closeout:
             self.closeout.observe(now)
+        if self.observer:
+            self.observer.observe(now)
 
     def tick(self, now, send, *, safe_boundary=True):
         self.observe(now)
@@ -96,6 +103,8 @@ class PiProtocol:
             tool_id = event.get('toolCallId')
             if type(tool_id) is not str or not tool_id:
                 raise Problem('Missing Pi tool execution identity')
+            if self.observer:
+                self.observer.record_tool(event)
             if kind == 'tool_execution_start':
                 if tool_id in self.active_tools:
                     raise Problem('Duplicate active Pi tool execution identity')
@@ -126,6 +135,8 @@ class PiProtocol:
             self.checkpoints.finish(time.monotonic())
         if self.closeout:
             self.closeout.finish(time.monotonic())
+        if self.observer:
+            self.observer.finish()
 
 
 def _delivery_instructions(context, submit, *, help_allowed=False):
@@ -142,7 +153,8 @@ completion.json or create workspace delivery/. A submitted receipt is not accept
 
 
 def _pi_worker(prompt, context, private, sandbox, process_options, root, *,
-               delivery_instructions, allowed=(), readonly=(), checkpoints=None, closeout=None, git_write=False, pi_bin="pi"):
+               delivery_instructions, allowed=(), readonly=(), checkpoints=None, closeout=None,
+               observer=None, git_write=False, pi_bin="pi"):
     config = pi_home(private / "pi")
     (context / "worker-prompt.txt").write_text(prompt)
     argv = [pi_bin, "--mode", "rpc", "--provider", "bonsai", "--model", "bonsai2-27b", "--thinking", "xhigh",
@@ -158,10 +170,11 @@ def _pi_worker(prompt, context, private, sandbox, process_options, root, *,
         writable.append(root / '.git')
     if checkpoints:
         writable.append(checkpoints.directory / 'reports')
+    # The observer is passive and controller-owned: its directory is never granted to Pi.
     run_process(sandbox.wrap(argv, root, allowed, writable, readonly=readonly),
                 cwd=root, env=env, out=context / "pi",
                 protocol=PiProtocol(prompt, context / "pi-runtime.json", checkpoints=checkpoints,
-                                    closeout=closeout), **process_options)
+                                    closeout=closeout, observer=observer), **process_options)
 
 
 def _document_instructions(task, context, task_dir, kinds, author):
@@ -211,7 +224,23 @@ The receiver validates protocol only. Your evidence is a claim for independent C
 For blocked work use --status blocked; do not invent a commit or test result to fill a packet.
 """
     checkpoints = None
-    if 'checkpoint_seconds' in manifest:
+    observer = None
+    if manifest.get('checkpoint_mode') == 'observe':
+        # Passive read-only observation: no progress reports, no steer, no report timeout.
+        outputs = manifest.get('checkpoint_outputs', ())
+        observer = Observer(task, attempt_dir, manifest['checkpoint_seconds'],
+                            outputs=outputs, workspace=root,
+                            timeout=process_options['timeout'])
+        outputs_text = ' and '.join(outputs) if outputs else 'none'
+        instructions += (
+            f'Passive output observation every {manifest["checkpoint_seconds"]} seconds: \n'
+            'Codinator reads your existing logs, tool events and declared outputs '
+            f'({outputs_text}) read-only and records bounded metadata. This is a passive '
+            'observer; it does not request progress reports, send steering messages, '
+            'stop the attempt for silence or extend the budget. Continue working without '
+            'responding to observations. Hard limits, cancellation and the final '
+            'delivery summary/evidence duties remain in full force.\n')
+    elif 'checkpoint_seconds' in manifest:
         checkpoints = Checkpoints(task, attempt_dir, manifest['checkpoint_seconds'],
                                   timeout=process_options['timeout'])
         instructions += (f'Soft checkpoints every {manifest["checkpoint_seconds"]} seconds use RPC steer.\n'
@@ -275,7 +304,7 @@ Then stop. You may not declare accepted. Each edit/check must remain within this
     _pi_worker(prompt, attempt_dir, private, sandbox, process_options, root,
                delivery_instructions=instructions, allowed=manifest['allowed_paths'],
                readonly=[attempt_dir.parent], checkpoints=checkpoints, closeout=closeout,
-               git_write=manifest['version'] == 2, pi_bin=pi_bin)
+               observer=observer, git_write=manifest['version'] == 2, pi_bin=pi_bin)
 
 
 def repair_delivery(task, attempt_dir, private, sandbox, process_options, error, pi_bin="pi"):

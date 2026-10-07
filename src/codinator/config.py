@@ -41,7 +41,8 @@ def load_manifest(path):
     allowed_keys = {"version", "id", "workspace", "handoff", "allowed_paths", "checks", "excludes",
                     "max_rounds", "max_seconds", "attempt_seconds", "checkpoint_seconds", "deadline_utc",
                     "notify_thread", "integration", "git", "handoff_protocol",
-                    "checkpoint_format", "first_checkpoint", "counterexamples", "stage", "implementation"}
+                    "checkpoint_format", "first_checkpoint", "counterexamples", "checkpoint_mode",
+                    "checkpoint_outputs", "stage", "implementation"}
     if type(raw) is not dict or set(raw) - allowed_keys:
         raise Problem("Unknown manifest field(s)")
     if raw.get("version") not in (1, 2) or type(raw.get("version")) is not int:
@@ -61,6 +62,23 @@ def load_manifest(path):
             raise Problem('compact checkpoints require nonempty counterexamples')
     elif 'first_checkpoint' in raw or 'counterexamples' in raw:
         raise Problem('first_checkpoint/counterexamples require compact checkpoints')
+    if 'checkpoint_mode' in raw:
+        mode = raw['checkpoint_mode']
+        if type(mode) is not str or mode != 'observe':
+            raise Problem(f"Unknown checkpoint_mode {mode!r}; only 'observe' is supported")
+        if raw.get('version') != 2:
+            raise Problem("checkpoint_mode 'observe' requires manifest version 2")
+        if raw.get('handoff_protocol') != 1:
+            raise Problem("checkpoint_mode 'observe' requires handoff_protocol 1")
+        if 'checkpoint_seconds' not in raw:
+            raise Problem("checkpoint_mode 'observe' requires checkpoint_seconds")
+        if ('checkpoint_format' in raw or 'first_checkpoint' in raw or 'counterexamples' in raw):
+            raise Problem("checkpoint_mode 'observe' is mutually exclusive with checkpoint_format, "
+                          "first_checkpoint and counterexamples")
+        if raw.get('implementation') == 'external':
+            raise Problem("checkpoint_mode 'observe' does not support implementation='external'")
+    if 'checkpoint_outputs' in raw and raw.get('checkpoint_mode') != 'observe':
+        raise Problem("checkpoint_outputs is only valid with checkpoint_mode 'observe'")
     if 'implementation' in raw and (raw['implementation'] != 'external' or raw.get('handoff_protocol') != 1):
         raise Problem('external implementation requires handoff_protocol 1')
     if 'stage' in raw:
@@ -104,6 +122,21 @@ def load_manifest(path):
             raise Problem(f"Writable path may not traverse a symlink: {p}")
         if target.is_dir() and not p.endswith("/"):
             raise Problem(f"Directory allowlists need trailing '/': {p}")
+    if raw.get('checkpoint_mode') == 'observe':
+        outputs = raw.get('checkpoint_outputs', [])
+        if type(outputs) is not list:
+            raise Problem("checkpoint_outputs must be an array of distinct relative file paths")
+        if len(outputs) > 16:
+            raise Problem("checkpoint_outputs must contain at most 16 distinct file paths")
+        seen = set()
+        for p in outputs:
+            if type(p) is not str or not p or "\0" in p:
+                raise Problem("checkpoint_outputs entries must be nonempty relative file paths")
+            if relative(p) in seen:
+                raise Problem(f"Duplicate checkpoint_outputs path: {p}")
+            seen.add(p)
+            if (root / p).is_dir():
+                raise Problem(f"checkpoint_outputs path must be a file, not a directory: {p}")
     raw.setdefault("excludes", DEFAULT_EXCLUDES.copy() if raw['version'] == 1 else [])
     if not isinstance(raw["excludes"], list):
         raise Problem("excludes must be an array")
