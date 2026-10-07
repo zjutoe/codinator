@@ -8,6 +8,7 @@ never spawns subprocesses, runs Git or tests.
 """
 import json
 import os
+import hashlib
 import subprocess
 import sys
 import tempfile
@@ -19,7 +20,9 @@ from unittest.mock import patch
 from codinator.agents import PiProtocol
 from codinator.config import load_manifest
 from codinator.observations import Observer, status as observation_status
-from codinator.process import run_process
+from codinator.process import Interrupted, run_process
+from codinator.files import Problem
+import codinator.agents as agents_mod
 
 STATE = {"model": {"provider": "bonsai", "id": "bonsai2-27b"},
          "thinkingLevel": "xhigh", "isStreaming": False, "pendingMessageCount": 0,
@@ -500,6 +503,339 @@ for line in sys.stdin:
             json.loads(p.read_text()).get("tool_events", {}).get("active_count", 0) >= 1
             for p in records)
         self.assertTrue(any_active, "no observation captured the active tool")
+
+class ObserveBaselineTimingTests(unittest.TestCase):
+    """Baseline next_due is start + interval; the first observation may only
+    fire after a full interval has elapsed."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(dir="/tmp", prefix="obs-tim-")
+        self.addCleanup(self.tmp.cleanup)
+        self.ctx = Path(self.tmp.name) / "attempt-0001"
+        self.ctx.mkdir(parents=True)
+        (self.ctx / "pi").mkdir()
+        (self.ctx / "pi" / "stdout.jsonl").write_text("{}\n")
+        (self.ctx / "pi" / "stderr.txt").write_text("")
+        self.ws = Path(self.tmp.name) / "ws"
+        self.ws.mkdir()
+        (self.ws / "out.txt").write_text("output\n")
+        self.task = {"id": "OB", "round": 1, "attempt": 1}
+        self.observer = Observer(self.task, self.ctx, 60, outputs=("out.txt",),
+                                 workspace=self.ws)
+
+    def start(self):
+        self.observer.start(100.0)
+
+    def records(self):
+        return sorted(self.observer.directory.glob("record-*.json"))
+
+    def test_baseline_next_due_is_start_plus_interval(self):
+        self.start()
+        self.assertEqual(self.observer.next_due, 160.0)
+        # No sampling before one full interval has elapsed.
+        self.observer.observe(159.9)
+        self.assertEqual(len(self.records()), 1)
+
+    def test_first_observation_at_interval(self):
+        self.start()
+        self.observer.observe(160.0)
+        self.assertEqual(len(self.records()), 2)
+        self.assertEqual(self.observer.next_due, 220.0)
+        self.observer.observe(179.9)
+        self.assertEqual(len(self.records()), 2)
+
+    def test_records_carry_contract_identity(self):
+        self.start()
+        self.observer.observe(160.0)
+        for p in self.records():
+            v = json.loads(p.read_text())
+            self.assertEqual(v["task_id"], "OB")
+            self.assertEqual(v["round"], 1)
+            self.assertEqual(v["attempt"], 1)
+            self.assertEqual(v["mode"], "observe")
+            self.assertEqual(v["interval_seconds"], 60)
+            self.assertEqual(v["version"], 1)
+
+    def test_status_contract_bound_to_records(self):
+        self.start()
+        self.observer.observe(160.0)
+        st = observation_status(self.ctx, "OB", 1)
+        self.assertIsNotNone(st)
+        self.assertEqual(st["contract"]["mode"], "observe")
+        self.assertEqual(st["contract"]["task_id"], "OB")
+        self.assertEqual(st["contract"]["round"], 1)
+        self.assertEqual(st["contract"]["attempt"], 1)
+        self.assertEqual(st["latest"]["task_id"], "OB")
+        self.assertEqual(st["latest"]["round"], 1)
+        self.assertEqual(st["latest"]["attempt"], 1)
+        self.assertIsNot(st["contract"], st["latest"])
+        # A record with a conflicting identity is not counted.
+        bad = dict(st["latest"])
+        bad["attempt"] = 2
+        (self.observer.directory / "record-0099.json").write_text(json.dumps(bad) + "\n")
+        st2 = observation_status(self.ctx, "OB", 1)
+        self.assertEqual(st2["count"], 2)
+        self.assertEqual(st2["latest_checkpoint"], 1)
+        self.assertEqual(st2["contract"]["attempt"], 1)
+        # A record missing an identity field is also not counted.
+        bad2 = dict(st["latest"])
+        del bad2["attempt"]
+        (self.observer.directory / "record-0098.json").write_text(json.dumps(bad2) + "\n")
+        st3 = observation_status(self.ctx, "OB", 1)
+        self.assertEqual(st3["count"], 2)
+        self.assertIsNone(observation_status(self.ctx, "OB", 2))
+
+
+class ObserveSafeReadBoundsTests(unittest.TestCase):
+    """inode/dev/range, write-in-progress hints, and versioned non-overwritten
+    fragments."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(dir="/tmp", prefix="obs-bound2-")
+        self.addCleanup(self.tmp.cleanup)
+        self.ctx = Path(self.tmp.name) / "attempt-0001"
+        self.ctx.mkdir(parents=True)
+        (self.ctx / "pi").mkdir()
+        (self.ctx / "pi" / "stdout.jsonl").write_text("{}\n")
+        (self.ctx / "pi" / "stderr.txt").write_text("")
+        self.ws = Path(self.tmp.name) / "ws"
+        self.ws.mkdir()
+        (self.ws / "out.txt").write_text("abc\n")
+        self.task = {"id": "OB", "round": 1, "attempt": 1}
+
+    def make(self, interval=1):
+        self.observer = Observer(self.task, self.ctx, interval,
+                                 outputs=("out.txt",), workspace=self.ws)
+        self.observer.start(100.0)
+        return self.observer
+
+    def load(self, number):
+        return json.loads((self.observer.directory /
+                           ("record-%04d.json" % number)).read_text())
+
+    def source(self, record, rel):
+        return [s for s in record["sources"] if s["path"] == rel][0]
+
+    def test_inode_dev_range_recorded(self):
+        obs = self.make()
+        base = self.load(0)
+        s = self.source(base, "out.txt")
+        st = os.lstat(self.ws / "out.txt")
+        self.assertEqual(s["inode"], st.st_ino)
+        self.assertEqual(s["dev"], st.st_dev)
+        self.assertEqual(s["range"], [0, 4])
+        self.assertEqual(s["bytes_read"], 4)
+        self.assertEqual(s["sha256_sample"], hashlib.sha256(b"abc\n").hexdigest())
+        self.assertFalse(s["truncated"])
+        self.assertFalse(s["content_changed"])
+        self.assertFalse(s["previously_read"])
+        (self.ws / "out.txt").write_text("0" * 5 + "tail\n")
+        self.observer.observe(101.0)
+        s2 = self.source(self.load(1), "out.txt")
+        self.assertTrue(s2["content_changed"])
+        self.assertFalse(s2["truncated"])
+        self.assertEqual(s2["range"], [0, 10])
+        self.assertEqual(s2["bytes_read"], 10)
+
+    def test_write_in_progress_hint(self):
+        obs = self.make()
+        (self.ws / "out.txt").write_text("no trailing newline")
+        self.observer.observe(101.0)
+        s = self.source(self.load(1), "out.txt")
+        self.assertTrue(s["write_in_progress"])
+        (self.ws / "out.txt").write_text("complete\n")
+        self.observer.observe(102.0)
+        s2 = self.source(self.load(2), "out.txt")
+        self.assertFalse(s2["write_in_progress"])
+
+    def test_fragments_versioned_and_not_overwritten(self):
+        obs = self.make()
+        (self.ws / "out.txt").write_text("first\n")
+        self.observer.observe(101.0)
+        rec1 = self.load(1)
+        (self.ws / "out.txt").write_text("second\n")
+        self.observer.observe(102.0)
+        rec2 = self.load(2)
+        s1, s2 = self.source(rec1, "out.txt"), self.source(rec2, "out.txt")
+        self.assertIsNotNone(s1["fragment_path"])
+        self.assertIsNotNone(s2["fragment_path"])
+        self.assertNotEqual(s1["fragment_path"], s2["fragment_path"])
+        d = self.observer.directory
+        b1 = (d / s1["fragment_path"]).read_bytes()
+        b2 = (d / s2["fragment_path"]).read_bytes()
+        self.assertEqual(b1, b"first\n")
+        self.assertEqual(b2, b"second\n")
+        self.assertEqual(s1["fragment_bytes"], len(b1))
+        self.assertEqual(s2["fragment_bytes"], len(b2))
+        self.assertEqual(s1["fragment_range"], [0, 6])
+        self.assertEqual(s2["fragment_range"], [0, 7])
+        names = {p.name for p in (d / "outputs") if p.is_file()}
+        self.assertEqual(len(names), 3)
+
+
+class ObserveRealCancelTimeoutTests(unittest.TestCase):
+    """Real local subprocess: cancel, hard timeout, and final delivery absence."""
+
+    FAKE_AGENT = r"""
+import json, sys, time
+
+def emit(e):
+    sys.stdout.write(json.dumps(e, ensure_ascii=False) + "\n")
+    sys.stdout.flush()
+
+STATE = {"model": {"provider": "bonsai", "id": "bonsai2-27b"},
+         "thinkingLevel": "xhigh", "isStreaming": False, "pendingMessageCount": 0,
+         "sessionId": "fake"}
+
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    req = json.loads(line)
+    kind = req.get("type")
+    if kind == "get_state":
+        emit({"type": "response", "id": "state", "success": True, "data": STATE})
+    elif kind == "prompt":
+        emit({"type": "response", "id": "prompt", "success": True})
+        emit({"type": "agent_start"})
+        emit({"type": "tool_execution_start", "toolCallId": "sleep-tool", "name": "sleep"})
+        time.sleep(__SLEEP__)
+        emit({"type": "tool_execution_end", "toolCallId": "sleep-tool"})
+        emit({"type": "message_end", "message": {"role": "assistant",
+                                                 "stopReason": "stop", "text": "done"}})
+        emit({"type": "agent_end"})
+        emit({"type": "agent_settled"})
+        break
+    else:
+        emit({"type": "response", "id": req.get("id"), "success": True})
+"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(dir="/tmp", prefix="obs-lif-")
+        self.addCleanup(self.tmp.cleanup)
+        self.ws = Path(self.tmp.name) / "ws"
+        self.ws.mkdir()
+        self.ctx = Path(self.tmp.name) / "attempt-0001"
+        self.ctx.mkdir(parents=True)
+        (self.ws / "out.txt").write_text("output\n")
+        self.task = {"id": "OB", "round": 1, "attempt": 1}
+        self.observer = Observer(self.task, self.ctx, 1,
+                                 outputs=("out.txt",), workspace=self.ws)
+        self.protocol = PiProtocol("prompt", self.ctx / "pi-runtime.json",
+                                   observer=self.observer)
+        self.agent = Path(self.tmp.name) / "_fake_agent.py"
+
+    def write_agent(self, sleep_seconds):
+        self.agent.write_text(self.FAKE_AGENT.replace("__SLEEP__", sleep_seconds))
+
+    def _run(self, timeout=30.0, cancel=None, **kw):
+        cancel = cancel if cancel is not None else (lambda: False)
+        env = dict(os.environ)
+        for key in list(env):
+            if key.lower().endswith("_proxy"):
+                del env[key]
+        return run_process([sys.executable, str(self.agent)], cwd=self.ws, env=env,
+                           out=self.ctx / "pi", timeout=timeout,
+                           protocol=self.protocol, cancel=cancel, **kw)
+
+    def test_cancel_stops_process_and_records_active_tool(self):
+        self.write_agent("2.0")
+        def cancel():
+            # Cancel once the first full-interval observation exists, while the
+            # tool is still the active one.
+            return (self.observer.directory / "record-0001.json").exists()
+        with self.assertRaises(Interrupted):
+            self._run(cancel=cancel)
+        result = json.loads((self.ctx / "pi" / "result.json").read_text())
+        self.assertFalse(result["protocol_completed"])
+        self.assertTrue(result["failure"])
+        self.assertNotEqual(result.get("process_exit_code"), 0)
+        records = sorted(self.observer.directory.glob("record-*.json"))
+        self.assertGreaterEqual(len(records), 2)
+        any_active = any(
+            json.loads(p.read_text()).get("tool_events", {}).get("active_count", 0) >= 1
+            for p in records)
+        self.assertTrue(any_active, "no observation captured the active tool")
+        self.assertFalse((self.ctx / "delivery" / "completion.json").exists())
+
+    def test_hard_timeout_stops_process(self):
+        self.write_agent("2.0")
+        with self.assertRaises(Problem):
+            self._run(timeout=0.5)
+        result = json.loads((self.ctx / "pi" / "result.json").read_text())
+        self.assertFalse(result["protocol_completed"])
+        self.assertTrue("budget" in str(result["failure"]))
+        self.assertFalse((self.ctx / "delivery" / "completion.json").exists())
+
+    def test_final_delivery_absent_stays_unverified(self):
+        self.write_agent("2.0")
+        code = self._run()
+        self.assertEqual(code, 0)
+        result = json.loads((self.ctx / "pi" / "result.json").read_text())
+        self.assertTrue(result["protocol_completed"])
+        # The fake agent never invoked the bound delivery tool: no submission
+        # exists, and no observation record claims acceptance.
+        self.assertFalse((self.ctx / "delivery" / "completion.json").exists())
+        for p in sorted(self.observer.directory.glob("record-*.json")):
+            v = json.loads(p.read_text())
+            self.assertIn("not progress, test success or acceptance", v["note"])
+            self.assertIn(v.get("kind"), ("baseline", "observation", "final"))
+
+
+class ObserveWorkerPromptTests(unittest.TestCase):
+    """Worker prompt in observe mode: no timed-report obligations; final
+    delivery and summary duties remain."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(dir="/tmp", prefix="obs-prom-")
+        self.addCleanup(self.tmp.cleanup)
+        self.ws = Path(self.tmp.name) / "ws"
+        self.ws.mkdir()
+        (self.ws / "obs.py").write_text("x = 1\n")
+        (self.ws / "docs").mkdir()
+        (self.ws / "tests").mkdir()
+        (self.ws / "tests" / "test_obs.py").write_text("pass\n")
+        (self.ws / "docs" / "handoff.md").write_text(HANDOFF_DOC)
+        manifest_path = Path(self.tmp.name) / "manifest.json"
+        manifest_path.write_text(json.dumps({
+            "version": 2,
+            "handoff_protocol": 1,
+            "id": "WOBS",
+            "workspace": str(self.ws),
+            "git": {"branch": "wo-obs", "base_commit": "0" * 64},
+            "handoff": "docs/handoff.md",
+            "allowed_paths": ["obs.py", "tests/test_obs.py"],
+            "checks": [{"name": "unit", "argv": ["/bin/true"], "timeout_seconds": 30}],
+            "checkpoint_mode": "observe",
+            "checkpoint_seconds": 60,
+            "attempt_seconds": 7200,
+            "max_seconds": 7200,
+            "max_rounds": 4,
+        }))
+        self.task = {"id": "WOBS", "round": 1, "attempt": 1,
+                     "manifest": load_manifest(manifest_path),
+                     "expected_digest": "0" * 64,
+                     "feedback": "Initial implementation."}
+        self.attempt_dir = Path(self.tmp.name) / "attempt-0001"
+        self.attempt_dir.mkdir()
+        self.private_dir = Path(self.tmp.name) / "private"
+        self.private_dir.mkdir()
+
+    def test_observe_prompt_has_no_report_obligation(self):
+        with patch.object(agents_mod, "_pi_worker") as mock_worker, \
+             patch.object(agents_mod, "_document_instructions", return_value=""), \
+             patch.object(agents_mod, "Closeout", return_value=object()):
+            agents_mod.worker(self.task, self.attempt_dir, self.private_dir,
+                              object(), {"timeout": 30.0})
+        prompt = mock_worker.call_args[0][0]
+        self.assertIn("Passive output observation every 60 seconds", prompt)
+        self.assertNotIn("within five minutes", prompt)
+        self.assertNotIn("valid progress report", prompt)
+        self.assertNotIn("Bound progress command", prompt)
+        self.assertNotIn("Soft checkpoints every", prompt)
+        # Final delivery and summary duties remain.
+        self.assertIn("Bound submission command", prompt)
+        self.assertIn("final delivery summary/evidence duties remain", prompt)
 
 if __name__ == "__main__":
     unittest.main()
