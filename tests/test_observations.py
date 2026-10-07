@@ -984,3 +984,42 @@ class ObservationExampleTests(ManifestBase):
         self.assertEqual(loaded['attempt_seconds'], 5400)
         self.assertEqual(loaded['stage']['max_seconds'], 57600)
         self.assertGreater(loaded['max_seconds'], loaded['checkpoint_seconds'])
+
+
+class ObservationReviewCorrections(unittest.TestCase):
+    setUp = ObserveBoundaryTests.setUp
+    make = ObserveBoundaryTests.make
+    sources = ObserveBoundaryTests.sources
+
+    def test_denied_history_and_io_errors_are_explicit_and_read_only(self):
+        self.make()
+        self.observer.observe(101.0)
+        directory = self.observer.directory
+        originals = {p.name:p.read_bytes() for p in directory.glob('record-*.json')}
+        original_mode = directory.stat().st_mode & 0o777
+        directory.chmod(0o111)
+        try:
+            with self.assertRaisesRegex(Problem, 'Cannot enumerate observation evidence'):
+                observation_status(self.ctx, 'OB', 1)
+        finally:
+            directory.chmod(original_mode)
+        with patch('codinator.observations.os.scandir', side_effect=OSError(5, 'injected I/O failure')):
+            with self.assertRaisesRegex(Problem, 'Cannot enumerate observation evidence'):
+                observation_status(self.ctx, 'OB', 1)
+        self.assertEqual(observation_status(self.ctx, 'OB', 1)['count'], 2)
+        self.assertEqual({p.name:p.read_bytes() for p in directory.glob('record-*.json')}, originals)
+
+    def test_nul_binary_stays_unknown_and_observation_continues(self):
+        (self.ws/'out.bin').write_bytes(bytes([0,1,2,3])*100)
+        self.make('out.bin')
+        source = self.sources(101.0)['out.bin']
+        self.assertTrue(source['utf8'])
+        self.assertFalse(source['text'])
+        self.assertEqual(source['content_state'], 'unknown')
+        self.assertNotIn('fragment_path', source)
+        (self.ws/'out.bin').write_text('普通 UTF-8 文本\n', encoding='utf-8')
+        source = self.sources(102.0)['out.bin']
+        self.assertTrue(source['text'])
+        self.assertEqual(source['content_state'], 'text')
+        self.assertTrue((self.observer.directory/source['fragment_path']).is_file())
+        self.assertEqual(observation_status(self.ctx, 'OB', 1)['count'], 3)

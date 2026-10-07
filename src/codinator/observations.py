@@ -131,7 +131,7 @@ class Observer:
             if builtin and state['status'] == 'read':
                 state['range'] = [previous['size'], state['size']] if previous and not state['replaced'] and not state['truncated'] else [0, state['size']]
                 state['reference_only'] = True
-            elif data is not None and state['utf8']:
+            elif data is not None and state['text']:
                 name = f'outputs/{self.number:04d}-{index:02d}.txt'
                 _publish(self.directory / name, data)
                 state.update(fragment_path=name, fragment_bytes=len(data),
@@ -154,7 +154,7 @@ class Observer:
 
     def _safe_read(self, base, rel, *, sample=True):
         result = dict(status='unreadable', error=None, size=None, range=None, bytes_read=0,
-            inode=None, dev=None, mtime_ns=None, sha256_sample=None, utf8=None,
+            inode=None, dev=None, mtime_ns=None, sha256_sample=None, utf8=None, text=None,
             write_in_progress=False, partial_line=None, jsonl=None, content_state='unknown', data=None)
         fd = None
         try:
@@ -176,9 +176,12 @@ class Observer:
                 partial_line=bool(data) and not data.endswith(b'\n'))
             try:
                 text = data.decode('utf-8')
-                result.update(utf8=True, content_state='unknown' if changed else 'text')
+                is_text = not any((ord(c)<32 and c not in '\t\r\n\x1b') or ord(c)==127 for c in text)
+                result.update(utf8=True, text=is_text, content_state='text' if is_text and not changed else 'unknown')
+                if not is_text:
+                    return result
             except UnicodeError:
-                result.update(utf8=False, content_state='unknown')
+                result.update(utf8=False, text=False, content_state='unknown')
                 return result
             if Path(rel).suffix in ('.json', '.jsonl'):
                 complete = False
@@ -224,7 +227,12 @@ def status(context, task_id, attempt):
         raise Problem(f'Invalid observation contract: {directory}')
     latest = latest_path = None
     try:
-        paths = sorted(directory.glob('record-*.json'), key=lambda p: int(p.stem.split('-', 1)[1]))
+        with os.scandir(directory) as entries:
+            paths = [directory / e.name for e in entries
+                     if e.name.startswith('record-') and e.name.endswith('.json')]
+        paths.sort(key=lambda p: int(p.stem.split('-', 1)[1]))
+    except OSError as exc:
+        raise Problem(f'Cannot enumerate observation evidence: {directory}: {exc}') from exc
     except ValueError as exc:
         raise Problem(f'Invalid observation record name: {directory}') from exc
     for number, path in enumerate(paths):
