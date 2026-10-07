@@ -1,22 +1,12 @@
-"""Read-only soft observation for checkpoint_mode='observe'.
+"""Passive, bounded observations. Artifact failures are unknown, not verdicts.
 
-The observer is passive: it does not request progress from Pi, sends no
-checkpoint steer and does not stop an attempt for missing reports or silence.
-It records bounded metadata about existing logs, tool events and declared
-outputs once per interval, plus a start baseline. Every observation is
-best-effort metadata only: it is an unverified claim, never progress, test
-success or acceptance. Hard limits, cancellation and final-delivery
-validation live in run_process and the delivery layer and are unchanged;
-observation errors never interrupt the agent or extend the budget.
-
-Persistence failures are recorded (persist_errors) and shown in records and
-status; they are never silently swallowed as if the sample had been taken.
+Controller evidence failures propagate explicitly. The observer never sends RPC
+requests, runs project commands, interprets model content or extends a deadline.
 """
 import errno
 import hashlib
 import json
 import os
-import re
 import stat
 import time
 from datetime import datetime, timezone
@@ -27,434 +17,234 @@ from .delivery import _encode, _json, _read, _write_once
 from .files import Problem
 
 _MAX_READ = 32 * 1024
-_MAX_FRAGMENT = 16 * 1024
 _MAX_OUTPUTS = 16
+_MAX_RECORD = 1_000_000
 
 
-def _utc():
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+def _publish(path, data):
+    if len(data) > _MAX_RECORD:
+        raise Problem(f"Observation evidence exceeds size limit: {path}")
+    try:
+        _write_once(path, data)
+    except OSError as exc:
+        raise Problem(f"Cannot persist observation evidence: {path}: {exc}") from exc
+
+
+def _open_under(base, rel):
+    """Use directory descriptors, never process cwd or a checked-then-open path."""
+    parts = rel.split('/')
+    if any(p in ('', '.', '..') for p in parts):
+        raise OSError(errno.EINVAL, 'invalid relative path')
+    directory = os.open(base, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for part in parts[:-1]:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                            dir_fd=directory)
+            os.close(directory)
+            directory = child
+        return os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                       dir_fd=directory)
+    finally:
+        os.close(directory)
 
 
 class Observer:
-    """Passive observation adapter bound to one attempt's logs and declared outputs."""
-
-    BUILTIN = ("pi/stdout.jsonl", "pi/stderr.txt")
-    NOTE = ("Observation of existing logs, tool events and declared artifacts; "
-            "an unverified claim, not progress, test success or acceptance.")
+    BUILTIN = ('pi/stdout.jsonl', 'pi/stderr.txt')
+    NOTE = ('Observation of existing logs, tool events and declared artifacts; '
+            'an unverified claim, not progress, test success or acceptance.')
 
     def __init__(self, task, context, interval, outputs=(), workspace=None, timeout=None):
         if type(interval) is not int or interval <= 0:
-            raise Problem("checkpoint_seconds must be a positive integer")
-        outputs = tuple(outputs or ())
+            raise Problem('checkpoint_seconds must be a positive integer')
         if len(outputs) > _MAX_OUTPUTS:
-            raise Problem("checkpoint_outputs must contain at most 16 distinct file paths")
-        self.task = task
-        self.identity = _identity({
-            "task_id": task["id"], "round": task["round"], "attempt": task["attempt"]})
+            raise Problem('Too many checkpoint outputs')
+        self.identity = _identity(dict(task_id=task['id'], round=task['round'], attempt=task['attempt']))
         self.interval = interval
-        self.context = Path(context).resolve()
-        self.workspace = Path(workspace or context).resolve()
-        self.timeout = timeout
-        self.directory = self.context / "observations"
-        self.directory.mkdir(parents=True, exist_ok=True)
-        self._fragment_dir = self.directory / "outputs"
-        self._fragment_dir.mkdir(parents=True, exist_ok=True)
-        self.sources = self.BUILTIN + outputs
-        # Canonical absolute base directory per source; safe reads are only
-        # opened under the matching base, never through any other route.
-        self._source_base = {}
-        for rel in self.BUILTIN:
-            self._source_base[rel] = self.context
-        for rel in outputs:
-            self._source_base[rel] = self.workspace
+        self.context = Path(context).absolute()
+        self.workspace = Path(workspace or context).absolute()
+        self.directory = self.context / 'observations'
+        self.directory.mkdir(exist_ok=False)
+        (self.directory / 'outputs').mkdir()
+        self.sources = ([{'base': 'attempt', 'path': p} for p in self.BUILTIN]
+                        + [{'base': 'workspace', 'path': p} for p in outputs])
         self.number = 0
         self.records = 0
-        self.started = None
-        self.next_due = None
-        self.now = None
+        self.started = self.next_due = self.now = None
+        self.finished = False
         self.tool_starts = {}
-        self.tool_starts_total = 0
-        self.tool_ends = 0
+        self.tool_starts_total = self.tool_ends = 0
         self._file_state = {}
-        self._persist_errors = []
-        contract = self.identity | {
-            "version": 1, "mode": "observe", "checkpoint_seconds": interval,
-            "workspace": str(self.workspace), "sources": list(self.sources), "note": self.NOTE}
-        self._write_once_safe(self.directory / "contract.json", _encode(contract))
-
-    # -- entry points (must never interrupt the agent) -----------------------
+        contract = self.identity | dict(version=1, mode='observe', checkpoint_seconds=interval,
+            workspace=str(self.workspace), sources=self.sources, note=self.NOTE)
+        _publish(self.directory / 'contract.json', _encode(contract))
 
     def start(self, now):
         if self.started is not None:
-            raise Problem("Observer already started")
+            raise Problem('Observer already started')
         self.started = self.now = now
-        # Baseline is taken now; the first sampling may only happen after one
-        # full interval has elapsed (baseline next_due == start + interval).
-        self.next_due = self.started + self.interval
-        self._collect(self.number, "baseline")
+        self.next_due = now + self.interval
+        self._collect('baseline')
 
     def observe(self, now):
-        try:
-            if self.started is None or self.next_due is None:
-                return
+        if self.started is not None and not self.finished and now >= self.next_due:
             self.now = now
-            if now >= self.next_due:
-                self.number += 1
-                self._collect(self.number, "observation")
-                self.next_due = self.now + self.interval
-        except Exception:
-            # Observation is metadata only: any failure is recorded in
-            # persist_errors, never raised to the agent loop.
-            pass
+            self.number += 1
+            self._collect('observation')
+            self.next_due = now + self.interval
 
     def record_tool(self, event):
-        try:
-            kind = event.get("type")
-            tool_id = event.get("toolCallId")
-            if not kind or not isinstance(tool_id, str) or not tool_id:
-                return
-            if kind == "tool_execution_start":
-                if tool_id in self.tool_starts:
-                    return
-                self.tool_starts[tool_id] = time.monotonic()
-                self.tool_starts_total += 1
-            elif kind == "tool_execution_end":
-                if tool_id in self.tool_starts:
-                    del self.tool_starts[tool_id]
-                self.tool_ends += 1
-        except Exception:
-            pass
+        kind, tool_id = event.get('type'), event.get('toolCallId')
+        if not isinstance(tool_id, str) or not tool_id:
+            return
+        if kind == 'tool_execution_start' and tool_id not in self.tool_starts:
+            self.tool_starts[tool_id] = True
+            self.tool_starts_total += 1
+        elif kind == 'tool_execution_end':
+            self.tool_starts.pop(tool_id, None)
+            self.tool_ends += 1
 
     def active_tools(self):
         return sorted(self.tool_starts)
 
     def finish(self):
-        """Capture a final observation as metadata; it neither stops nor
-        changes budgets."""
-        try:
-            if self.started is None:
-                return
-            now = time.monotonic()
-            self.now = now
-            # Always capture a final snapshot on normal completion; it is an
-            # end-of-attempt record, not bounded by the sampling interval.
+        if self.started is not None and not self.finished:
+            self.now = time.monotonic()
             self.number += 1
-            self._collect(self.number, "final")
-        except Exception:
-            pass
+            self._collect('final')
+            self.finished = True
 
-    # -- persistence helpers -------------------------------------------------
-
-    def _write_once_safe(self, path, data):
-        """Publish once; a persistence failure is recorded, not raised, so the
-        agent is never interrupted. Returns True on success."""
-        try:
-            _write_once(path, data)
-            return True
-        except Exception:
-            name = Path(path).name
-            if name not in self._persist_errors:
-                self._persist_errors.append(name)
-            return False
-
-    def _collect(self, number, kind):
-        record = self._record(number, kind)
-        self.number = number
-        # Every historical record is written once; record-NNNN is unique per
-        # checkpoint number and never overwritten.
-        self._write_once_safe(self.directory / ("record-%04d.json" % number),
-                             _encode(record))
-        self.records = number
-
-    def _record(self, number, kind):
+    def _collect(self, kind):
         sources = []
-        for rel in self.sources:
-            prev = self._file_state.get(rel)
-            state = self._safe_read(self._source_base[rel], rel)
-            raw_data = state.pop("data", None)
-            state["path"] = rel
-            state["base"] = "attempt" if rel in self.BUILTIN else "workspace"
-            state["previously_read"] = prev is not None
-            if (prev is not None and state.get("size") is not None
-                    and prev.get("size") is not None
-                    and state["size"] < prev["size"]):
-                state["truncated"] = True
-            if (prev is not None and state.get("sha256_sample") is not None
-                    and prev.get("hash") is not None
-                    and state["sha256_sample"] != prev.get("hash")):
-                state["content_changed"] = True
-            # Declared outputs get a bounded, versioned fragment copy; builtin
-            # RPC logs never copy dialogue, only bounded metadata/offsets.
-            if (rel not in self.BUILTIN and state["status"] == "read"
-                    and raw_data is not None):
-                fp, fb, frange = self._save_fragment(rel, number, raw_data,
-                                                     state.get("range"))
-                if fp is not None:
-                    state["fragment_path"] = fp
-                    state["fragment_bytes"] = fb
-                    state["fragment_range"] = frange
-            if state["status"] == "read":
-                self._file_state[rel] = {
-                    "size": state.get("size"),
-                    "hash": state.get("sha256_sample"),
-                    "inode": state.get("inode"),
-                    "dev": state.get("dev"),
-                }
+        for index, source in enumerate(self.sources):
+            builtin = source['base'] == 'attempt'
+            base = self.context if builtin else self.workspace
+            state = self._safe_read(base, source['path'], sample=not builtin)
+            data = state.pop('data', None)
+            state.update(source)
+            previous = self._file_state.get(index)
+            state['previously_read'] = previous is not None
+            state['replaced'] = previous is not None and state.get('inode') is not None and (
+                state['dev'], state['inode']) != (previous['dev'], previous['inode'])
+            state['truncated'] = previous is not None and state.get('size') is not None and state['size'] < previous['size']
+            state['delta_bytes'] = None if previous is None or state.get('size') is None or state['replaced'] else state['size'] - previous['size']
+            state['content_changed'] = previous is not None and data is not None and state['sha256_sample'] != previous['hash']
+            if builtin and state['status'] == 'read':
+                state['range'] = [previous['size'], state['size']] if previous and not state['replaced'] and not state['truncated'] else [0, state['size']]
+                state['reference_only'] = True
+            elif data is not None and state['utf8']:
+                name = f'outputs/{self.number:04d}-{index:02d}.txt'
+                _publish(self.directory / name, data)
+                state.update(fragment_path=name, fragment_bytes=len(data),
+                    fragment_range=state['range'], sha256_fragment=state['sha256_sample'])
+            if state['status'] == 'read':
+                self._file_state[index] = dict(size=state['size'], dev=state['dev'],
+                    inode=state['inode'], hash=state['sha256_sample'])
             sources.append(state)
-        return {
-            "version": 1,
-            "task_id": self.task["id"],
-            "round": self.task["round"],
-            "attempt": self.task["attempt"],
-            "kind": kind,
-            "mode": "observe",
-            "checkpoint": number,
-            "recorded_at_utc": _utc(),
-            "elapsed_seconds": round(self.now - self.started, 3) if self.started is not None else 0.0,
-            "interval_seconds": self.interval,
-            "note": self.NOTE,
-            "sha256_note": ("sha256_sample and sha256_fragment hash only the bounded "
-                             "bytes read, not the full file."),
-            "sources": sources,
-            "tool_events": {
-                "starts_total": self.tool_starts_total,
-                "ends_total": self.tool_ends,
-                "active_count": len(self.tool_starts),
-                "active_tools": self.active_tools(),
-            },
-            "persist_errors": list(self._persist_errors),
-        }
+        active = self.active_tools()
+        record = self.identity | dict(version=1, mode='observe', kind=kind, checkpoint=self.number,
+            recorded_at_utc=datetime.now(timezone.utc).isoformat(),
+            elapsed_seconds=round(self.now-self.started, 3), interval_seconds=self.interval,
+            sources=sources, note=self.NOTE,
+            sha256_note='Hashes identify only bounded sample/fragment bytes, not whole files.',
+            tool_events=dict(starts_total=self.tool_starts_total, ends_total=self.tool_ends,
+                active_count=len(active), active_tools=[p[:256] for p in active[:128]],
+                active_tools_truncated=len(active)>128 or any(len(p)>256 for p in active[:128])))
+        _publish(self.directory / f'record-{self.number:04d}.json', _encode(record))
+        self.records += 1
 
-    # -- safe reads -----------------------------------------------------------
-
-    def _classify_io(self, exc):
-        code = getattr(exc, "errno", None)
-        if code == errno.ENOENT:
-            return "missing", "missing"
-        if code == errno.ELOOP:
-            return "unreadable", "symlink"
-        if code == errno.EISDIR:
-            return "unreadable", "directory"
-        if code in (errno.EACCES, errno.EPERM):
-            return "unreadable", "permission"
-        return "unreadable", "io_error"
-
-    def _open_under(self, base_abs, parts):
-        """Open a relative path only through the base directory's file
-        descriptor. Every directory component, including the base, is opened
-        with O_DIRECTORY|O_NOFOLLOW and the process changes directory into it,
-        so no component can be a symlink and no ancestor is rewalked after a
-        previous check. The leaf is opened O_NOFOLLOW|O_NONBLOCK (not a
-        directory) and returned; the caller fstats it. The process cwd is
-        restored before returning, even on failure."""
-        orig_cwd = os.getcwd()
-        dir_fds = []
-        leaf = None
-        try:
-            fd = os.open(base_abs, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-            dir_fds.append(fd)
-            os.chdir(fd)
-            for i, part in enumerate(parts):
-                if not part or part == "." or part == "..":
-                    raise OSError(errno.ELOOP, "invalid path component")
-                flags = os.O_RDONLY | os.O_NOFOLLOW
-                if i == len(parts) - 1:
-                    flags |= os.O_NONBLOCK
-                    leaf = os.open(part, flags)
-                else:
-                    flags |= os.O_DIRECTORY
-                    dir_fds.append(os.open(part, flags))
-                    os.chdir(dir_fds[-1])
-        finally:
-            for d in dir_fds:
-                try:
-                    os.close(d)
-                except OSError:
-                    pass
-            try:
-                os.chdir(orig_cwd)
-            except OSError:
-                pass
-        return leaf
-
-    def _safe_read(self, base_abs, rel):
-        state = {
-            "status": "unreadable",
-            "size": None,
-            "range": None,
-            "bytes_read": 0,
-            "sha256_sample": None,
-            "inode": None,
-            "dev": None,
-            "truncated": False,
-            "previously_read": False,
-            "content_changed": False,
-            "utf8": True,
-            "write_in_progress": False,
-            "error": None,
-            "jsonl": None,
-            "data": None,
-        }
-        parts = rel.split(os.sep)
-        if not parts or any(p == "" or p in (".", "..") for p in parts):
-            state.update(status="unreadable", error="invalid_path")
-            return state
+    def _safe_read(self, base, rel, *, sample=True):
+        result = dict(status='unreadable', error=None, size=None, range=None, bytes_read=0,
+            inode=None, dev=None, mtime_ns=None, sha256_sample=None, utf8=None,
+            write_in_progress=False, partial_line=None, jsonl=None, content_state='unknown', data=None)
         fd = None
         try:
-            fd = self._open_under(str(base_abs), parts)
-            st = os.fstat(fd)
+            fd = _open_under(base, rel)
+            before = os.fstat(fd)
+            if not stat.S_ISREG(before.st_mode):
+                result['error'] = 'directory' if stat.S_ISDIR(before.st_mode) else 'special_file'
+                return result
+            result.update(status='read', size=before.st_size, inode=before.st_ino,
+                dev=before.st_dev, mtime_ns=before.st_mtime_ns)
+            if not sample:
+                return result
+            offset = max(0, before.st_size-_MAX_READ)
+            data = os.pread(fd, min(_MAX_READ, before.st_size-offset), offset)
+            after = os.fstat(fd)
+            changed = (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns)
+            result.update(data=data, range=[offset, offset+len(data)], bytes_read=len(data),
+                sha256_sample=hashlib.sha256(data).hexdigest(), write_in_progress=changed,
+                partial_line=bool(data) and not data.endswith(b'\n'))
+            try:
+                text = data.decode('utf-8')
+                result.update(utf8=True, content_state='unknown' if changed else 'text')
+            except UnicodeError:
+                result.update(utf8=False, content_state='unknown')
+                return result
+            if Path(rel).suffix in ('.json', '.jsonl'):
+                complete = False
+                if not offset and not changed:
+                    try:
+                        if rel.endswith('.jsonl'):
+                            for line in text.splitlines():
+                                if line.strip(): json.loads(line)
+                            complete = not result['partial_line']
+                        else:
+                            json.loads(text)
+                            complete = True
+                    except (ValueError, RecursionError):
+                        pass
+                result['jsonl'] = {'incomplete': not complete} if rel.endswith('.jsonl') else None
+                result['content_state'] = 'json' if complete else 'unknown'
+            return result
         except OSError as exc:
-            status_value, error = self._classify_io(exc)
-            state.update(status=status_value, error=error)
-            return state
-        try:
-            if not stat.S_ISREG(st.st_mode):
-                error = "directory" if stat.S_ISDIR(st.st_mode) else "special_file"
-                state.update(status="unreadable", error=error)
-                return state
-            size = st.st_size
-            state.update(size=size, inode=st.st_ino, dev=st.st_dev)
-            start = max(0, size - _MAX_READ)
-            end = min(size, start + _MAX_READ)
-            state["range"] = [start, end]
-            if end > start:
-                os.lseek(fd, start, os.SEEK_SET)
-                data = os.read(fd, end - start)
-            else:
-                data = b""
-        except OSError as exc:
-            status_value, error = self._classify_io(exc)
-            state.update(status=status_value, error=error)
-            return state
+            result.update(status='missing' if exc.errno==errno.ENOENT else 'unreadable',
+                error='symlink' if exc.errno==errno.ELOOP else 'io_error', content_state='unknown', data=None)
+            return result
         finally:
-            if fd is not None:
-                os.close(fd)
-        state["data"] = data
-        state["bytes_read"] = len(data)
-        if data:
-            state["sha256_sample"] = hashlib.sha256(data).hexdigest()
-            try:
-                data.decode("utf-8")
-            except UnicodeDecodeError:
-                state["utf8"] = False
-            if state["utf8"]:
-                state["write_in_progress"] = not data.endswith(b"\n")
-        if rel == "pi/stdout.jsonl":
-            state["jsonl"] = self._analyze_jsonl(data)
-        state["status"] = "read"
-        return state
+            if fd is not None: os.close(fd)
 
-    def _save_fragment(self, rel, number, data, sample_range):
-        """Copy a bounded fragment of a declared output to a versioned file.
-        The name carries the source identity and the checkpoint number, so
-        each sampling cycle gets a distinct, non-overwritten file and the
-        record's reference always points at this cycle's bytes."""
-        if not data:
-            return None, 0, None
-        fragment = data[:_MAX_FRAGMENT]
-        stem = re.sub(r"[^\w.\-]", "_", Path(rel).name)
-        h = hashlib.sha256(rel.encode("utf-8")).hexdigest()[:12]
-        name = "%s_%04d_%s" % (h, number, stem)
-        path = self._fragment_dir / name
-        if not self._write_once_safe(path, fragment):
-            return None, 0, None
-        start = (sample_range or [0, 0])[0]
-        return "outputs/%s" % name, len(fragment), [start, start + len(fragment)]
 
-    def _analyze_jsonl(self, data):
-        analysis = {"lines": 0, "parsed": 0, "last_line_complete": None, "incomplete": False}
-        if not data:
-            return analysis
-        try:
-            text = data.decode("utf-8")
-        except UnicodeDecodeError:
-            return analysis
-        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-        if not lines:
-            return analysis
-        analysis["lines"] = len(lines)
-        parsed = 0
-        last_complete = True
-        for ln in lines:
-            try:
-                json.loads(ln)
-                parsed += 1
-                last_complete = True
-            except ValueError:
-                last_complete = False
-        analysis["parsed"] = parsed
-        analysis["last_line_complete"] = last_complete
-        analysis["incomplete"] = not last_complete
-        return analysis
+def _document(path):
+    value, errors, _ = _json(_read(path), path)
+    if errors or type(value) is not dict:
+        raise Problem(f'Invalid observation evidence: {path}')
+    return value
 
 
 def status(context, task_id, attempt):
-    """Read-only latest observation for an attempt; None when observe mode was
-    not used. The contract and the latest record are bound together and kept
-    as separate fields; every counted record must carry the same contract
-    identity."""
-    directory = Path(context) / "observations"
+    directory = Path(context) / 'observations'
     if not (directory.exists() or directory.is_symlink()):
         return None
-    contract_path = directory / "contract.json"
-    if not (contract_path.exists() or contract_path.is_symlink()):
-        return None
-    try:
-        contract, errors, _ = _json(_read(contract_path), contract_path)
-    except (Problem, OSError, ValueError):
-        return None
-    if errors or type(contract) is not dict or contract.get("mode") != "observe":
-        return None
-    try:
-        identity = _identity({
-            "task_id": contract.get("task_id"), "round": contract.get("round"),
-            "attempt": contract.get("attempt")})
-    except Problem:
-        return None
-    if identity["task_id"] != task_id or identity["attempt"] != attempt:
-        return None
-    latest_number = -1
-    latest_value = None
-    latest_path = None
-    count = 0
-    try:
-        paths = [p for p in directory.glob("record-*.json")
-                 if (p.is_file() or p.is_symlink())]
-    except OSError:
-        return None
-    for p in paths:
-        try:
-            n = int(p.stem.split("-", 1)[1])
-        except (IndexError, ValueError, AttributeError):
-            continue
-        try:
-            value, errors, _ = _json(_read(p), p)
-        except (Problem, OSError, ValueError):
-            continue
-        if errors or type(value) is not dict or value.get("checkpoint") != n:
-            continue
-        if value.get("mode") != "observe":
-            continue
-        # Each record is bound to the contract identity; unbound records are
-        # not counted.
-        if (value.get("task_id"), value.get("round"), value.get("attempt")) != \
-                (identity["task_id"], identity["round"], identity["attempt"]):
-            continue
-        count += 1
-        if n > latest_number:
-            latest_number = n
-            latest_value = value
-            latest_path = p
-    if latest_number < 0:
-        return None
-    return {
-        "mode": "observe",
-        "checkpoint_seconds": contract.get("checkpoint_seconds"),
-        "contract": contract,
-        "sources": latest_value.get("sources"),
-        "count": count,
-        "latest_checkpoint": latest_number,
-        "latest_path": str(latest_path),
-        "latest": latest_value,
-        "note": "read-only observation; unverified claim, not progress, test success or acceptance.",
-    }
+    contract = _document(directory / 'contract.json')
+    identity = _identity(contract)
+    if (identity['task_id'], identity['attempt']) != (task_id, attempt) or contract.get('mode') != 'observe' or contract.get('version') != 1:
+        raise Problem(f'Observation contract binding mismatch: {directory}')
+    interval = contract.get('checkpoint_seconds')
+    if type(interval) is not int or interval <= 0 or type(contract.get('sources')) is not list:
+        raise Problem(f'Invalid observation contract: {directory}')
+    latest = latest_path = None
+    paths = sorted(directory.glob('record-*.json'))
+    for number, path in enumerate(paths):
+        if path.name != f'record-{number:04d}.json':
+            raise Problem(f'Observation sequence mismatch: {path}')
+        value = _document(path)
+        if (_identity(value) != identity or value.get('checkpoint') != number
+                or value.get('mode') != 'observe' or value.get('version') != 1
+                or value.get('interval_seconds') != interval
+                or type(value.get('sources')) is not list
+                or [{'base':s.get('base'), 'path':s.get('path')} for s in value['sources']] != contract['sources']):
+            raise Problem(f'Observation record binding mismatch: {path}')
+        for source in value['sources']:
+            fragment = source.get('fragment_path')
+            if fragment is not None:
+                index = value['sources'].index(source)
+                if fragment != f'outputs/{number:04d}-{index:02d}.txt':
+                    raise Problem(f'Invalid observation fragment reference: {path}')
+                data = _read(directory / fragment)
+                if len(data) != source.get('fragment_bytes') or hashlib.sha256(data).hexdigest() != source.get('sha256_fragment'):
+                    raise Problem(f'Observation fragment integrity mismatch: {path}')
+        latest, latest_path = value, str(path)
+    return dict(mode='observe', checkpoint_seconds=interval, contract=contract,
+        count=len(paths), latest_checkpoint=None if latest is None else latest['checkpoint'],
+        latest_path=latest_path, latest=latest, sources=None if latest is None else latest['sources'],
+        note=Observer.NOTE)

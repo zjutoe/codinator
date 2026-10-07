@@ -130,7 +130,7 @@ def load_manifest(path):
             raise Problem("checkpoint_outputs must contain at most 16 distinct file paths")
         seen = set()
         for p in outputs:
-            if type(p) is not str or not p or "\0" in p:
+            if type(p) is not str or not p or "\0" in p or p.endswith("/") or "//" in p:
                 raise Problem("checkpoint_outputs entries must be nonempty relative file paths")
             if relative(p) in seen:
                 raise Problem(f"Duplicate checkpoint_outputs path: {p}")

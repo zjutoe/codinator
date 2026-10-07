@@ -2,8 +2,7 @@
 
 No model, network, credential or bwrap access is required: tests drive a fake
 PiProtocol lifecycle (and, in one case, a real local subprocess) and assert that
-the observer produces bounded records on schedule, sends no steer, stops for
-nothing, and leaves the process free to finish. The observer is metadata only and
+the observer produces bounded records on schedule, sends no steer, continues across missing artifacts, and leaves the process free to finish. The observer is metadata only and
 never spawns subprocesses, runs Git or tests.
 """
 import json
@@ -90,85 +89,85 @@ class ObservationConfigTests(ManifestBase):
         self.assertEqual(m["checkpoint_outputs"], [])
 
     def test_observe_rejects_unknown_mode(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(Problem):
             self.load(self.base(checkpoint_mode="watch"))
 
     def test_observe_rejects_non_string_mode(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(Problem):
             self.load(self.base(checkpoint_mode=1))
 
     def test_observe_requires_version_2(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(Problem):
             self.load(self.base(checkpoint_mode="observe", version=1))
 
     def test_observe_requires_handoff_protocol(self):
         value = self.base(checkpoint_mode="observe")
         del value["handoff_protocol"]
-        with self.assertRaises(Exception):
+        with self.assertRaises(Problem):
             self.load(value)
 
     def test_observe_requires_checkpoint_seconds(self):
         value = self.base(checkpoint_mode="observe")
         del value["checkpoint_seconds"]
-        with self.assertRaises(Exception):
+        with self.assertRaises(Problem):
             self.load(value)
 
     def test_observe_mutually_excludes_compact(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(Problem):
             self.load(self.base(checkpoint_mode="observe", checkpoint_format="compact",
                                 first_checkpoint="goal", counterexamples=["e"]))
 
     def test_observe_mutually_excludes_first_checkpoint(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(Problem):
             self.load(self.base(checkpoint_mode="observe", first_checkpoint="goal"))
 
     def test_observe_mutually_excludes_counterexamples(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(Problem):
             self.load(self.base(checkpoint_mode="observe", counterexamples=["e"]))
 
     def test_observe_rejects_external_implementation(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(Problem):
             self.load(self.base(checkpoint_mode="observe", implementation="external"))
 
     def test_outputs_without_observe_rejected(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(Problem):
             self.load(self.base(checkpoint_outputs=["output.txt"]))
 
     def test_outputs_reject_absolute(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(Problem):
             self.load(self.base(checkpoint_mode="observe", checkpoint_outputs=["/abs/path.txt"]))
 
     def test_outputs_reject_dot(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(Problem):
             self.load(self.base(checkpoint_mode="observe", checkpoint_outputs=["./a.txt"]))
 
     def test_outputs_reject_double_dot(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(Problem):
             self.load(self.base(checkpoint_mode="observe", checkpoint_outputs=["sub/../a.txt"]))
 
     def test_outputs_reject_wildcard(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(Problem):
             self.load(self.base(checkpoint_mode="observe", checkpoint_outputs=["*"]))
 
     def test_outputs_reject_protected_dir(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(Problem):
             self.load(self.base(checkpoint_mode="observe", checkpoint_outputs=[".git/x.txt"]))
 
     def test_outputs_reject_duplicate(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(Problem):
             self.load(self.base(checkpoint_mode="observe", checkpoint_outputs=["a.txt", "a.txt"]))
 
     def test_outputs_reject_too_many(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(Problem):
             self.load(self.base(checkpoint_mode="observe",
                                checkpoint_outputs=[f"f{i}.txt" for i in range(17)]))
 
     def test_outputs_reject_directory(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(Problem):
             self.load(self.base(checkpoint_mode="observe", checkpoint_outputs=["outdir"]))
 
     def test_outputs_reject_empty_entry(self):
-        with self.assertRaises(Exception):
+        with self.assertRaises(Problem):
             self.load(self.base(checkpoint_mode="observe", checkpoint_outputs=[""]))
 
     def test_legacy_checkpoint_seconds_no_mode_preserved(self):
@@ -342,9 +341,9 @@ class ObserveBoundaryTests(unittest.TestCase):
         self.assertFalse(s["utf8"])
 
     def test_partial_json_flagged(self):
-        (self.ctx / "pi" / "stdout.jsonl").write_text('{"type":"a"}\n{"broken":\n')
-        self.make()
-        s = self.sources(101.0)["pi/stdout.jsonl"]
+        (self.ws / "partial.jsonl").write_text('{"type":"a"}\n{"broken":\n')
+        self.make("partial.jsonl")
+        s = self.sources(101.0)["partial.jsonl"]
         self.assertTrue(s["jsonl"]["incomplete"])
 
     def test_truncation_detected(self):
@@ -423,7 +422,8 @@ class ObserveStatusTests(unittest.TestCase):
     def test_status_wrong_attempt_returns_none(self):
         self.observer = Observer(self.task, self.ctx, 1)
         self.observer.start(100.0)
-        self.assertIsNone(observation_status(self.ctx, "OB", 2))
+        with self.assertRaises(Problem):
+            observation_status(self.ctx, "OB", 2)
 
 
 class ObserveRealProcessTests(unittest.TestCase):
@@ -569,21 +569,12 @@ class ObserveBaselineTimingTests(unittest.TestCase):
         self.assertEqual(st["latest"]["round"], 1)
         self.assertEqual(st["latest"]["attempt"], 1)
         self.assertIsNot(st["contract"], st["latest"])
-        # A record with a conflicting identity is not counted.
         bad = dict(st["latest"])
         bad["attempt"] = 2
-        (self.observer.directory / "record-0099.json").write_text(json.dumps(bad) + "\n")
-        st2 = observation_status(self.ctx, "OB", 1)
-        self.assertEqual(st2["count"], 2)
-        self.assertEqual(st2["latest_checkpoint"], 1)
-        self.assertEqual(st2["contract"]["attempt"], 1)
-        # A record missing an identity field is also not counted.
-        bad2 = dict(st["latest"])
-        del bad2["attempt"]
-        (self.observer.directory / "record-0098.json").write_text(json.dumps(bad2) + "\n")
-        st3 = observation_status(self.ctx, "OB", 1)
-        self.assertEqual(st3["count"], 2)
-        self.assertIsNone(observation_status(self.ctx, "OB", 2))
+        bad["checkpoint"] = 2
+        (self.observer.directory / "record-0002.json").write_text(json.dumps(bad))
+        with self.assertRaisesRegex(Problem, "binding mismatch"):
+            observation_status(self.ctx, "OB", 1)
 
 
 class ObserveSafeReadBoundsTests(unittest.TestCase):
@@ -634,19 +625,19 @@ class ObserveSafeReadBoundsTests(unittest.TestCase):
         s2 = self.source(self.load(1), "out.txt")
         self.assertTrue(s2["content_changed"])
         self.assertFalse(s2["truncated"])
-        self.assertEqual(s2["range"], [0, 10])
-        self.assertEqual(s2["bytes_read"], 10)
+        self.assertEqual(s2["range"], [0, 9])
+        self.assertEqual(s2["bytes_read"], 9)
 
     def test_write_in_progress_hint(self):
         obs = self.make()
         (self.ws / "out.txt").write_text("no trailing newline")
         self.observer.observe(101.0)
         s = self.source(self.load(1), "out.txt")
-        self.assertTrue(s["write_in_progress"])
+        self.assertTrue(s["partial_line"])
         (self.ws / "out.txt").write_text("complete\n")
         self.observer.observe(102.0)
         s2 = self.source(self.load(2), "out.txt")
-        self.assertFalse(s2["write_in_progress"])
+        self.assertFalse(s2["partial_line"])
 
     def test_fragments_versioned_and_not_overwritten(self):
         obs = self.make()
@@ -669,7 +660,7 @@ class ObserveSafeReadBoundsTests(unittest.TestCase):
         self.assertEqual(s2["fragment_bytes"], len(b2))
         self.assertEqual(s1["fragment_range"], [0, 6])
         self.assertEqual(s2["fragment_range"], [0, 7])
-        names = {p.name for p in (d / "outputs") if p.is_file()}
+        names = {p.name for p in (d / "outputs").iterdir() if p.is_file()}
         self.assertEqual(len(names), 3)
 
 
@@ -820,6 +811,10 @@ class ObserveWorkerPromptTests(unittest.TestCase):
         self.attempt_dir.mkdir()
         self.private_dir = Path(self.tmp.name) / "private"
         self.private_dir.mkdir()
+        from codinator.handoff import freeze_protocol
+        (self.attempt_dir.parent / "manifest.json").write_text(json.dumps(self.task["manifest"]))
+        (self.attempt_dir.parent / "handoff.md").write_text(HANDOFF_DOC)
+        freeze_protocol(self.attempt_dir.parent, self.task["manifest"])
 
     def test_observe_prompt_has_no_report_obligation(self):
         with patch.object(agents_mod, "_pi_worker") as mock_worker, \
@@ -839,3 +834,141 @@ class ObserveWorkerPromptTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ObservationFaultTests(unittest.TestCase):
+    setUp = ObserveBoundaryTests.setUp
+    make = ObserveBoundaryTests.make
+    sources = ObserveBoundaryTests.sources
+    def test_builtin_logs_are_metadata_only(self):
+        self.make()
+        with patch('codinator.observations.os.pread', side_effect=AssertionError('RPC bytes read')):
+            self.observer.observe(101.0)
+        records = observation_status(self.ctx, 'OB', 1)
+        for source in records['latest']['sources']:
+            self.assertEqual(source['bytes_read'], 0)
+            self.assertTrue(source['reference_only'])
+            self.assertIsNone(source['jsonl'])
+
+    def test_source_names_do_not_alias_builtin_logs(self):
+        (self.ws / 'pi').mkdir()
+        (self.ws / 'pi/stdout.jsonl').write_text('{"workspace": true}\n')
+        self.make('pi/stdout.jsonl')
+        sources = observation_status(self.ctx, 'OB', 1)['latest']['sources']
+        raw = next(s for s in sources if s['base']=='attempt' and s['path']=='pi/stdout.jsonl')
+        output = next(s for s in sources if s['base']=='workspace')
+        self.assertEqual(raw['bytes_read'], 0)
+        self.assertEqual((self.observer.directory/output['fragment_path']).read_bytes(), b'{"workspace": true}\n')
+
+    def test_parent_symlink_inside_workspace_rejected(self):
+        (self.ws / 'real').mkdir()
+        (self.ws / 'real/out.txt').write_text('safe\n')
+        (self.ws / 'linked').symlink_to('real', target_is_directory=True)
+        before = os.getcwd()
+        self.make('linked/out.txt')
+        source = self.sources(101.0)['linked/out.txt']
+        self.assertEqual(source['status'], 'unreadable')
+        self.assertEqual(os.getcwd(), before)
+
+    def test_parent_replaced_during_open_cannot_escape(self):
+        (self.ws / 'parent').mkdir()
+        (self.ws / 'parent/out.txt').write_text('original\n')
+        outside = Path(self.tmp.name)/'outside'
+        outside.mkdir()
+        (outside/'out.txt').write_text('outside\n')
+        self.make()
+        original_open = os.open
+        def racing_open(path, flags, *args, **kwargs):
+            fd = original_open(path, flags, *args, **kwargs)
+            if path=='parent':
+                (self.ws/'parent').rename(self.ws/'old-parent')
+                (self.ws/'parent').symlink_to(outside, target_is_directory=True)
+            return fd
+        with patch('codinator.observations.os.open', side_effect=racing_open):
+            result = self.observer._safe_read(self.ws, 'parent/out.txt')
+        self.assertEqual(result['data'], b'original\n')
+
+    def test_truncation_during_read_records_actual_range(self):
+        (self.ws/'out.txt').write_text('abcdef\n')
+        self.make('out.txt')
+        original_read = os.pread
+        def racing_read(fd, count, offset):
+            (self.ws/'out.txt').write_text('z\n')
+            return original_read(fd, count, offset)
+        with patch('codinator.observations.os.pread', side_effect=racing_read):
+            result = self.observer._safe_read(self.ws, 'out.txt')
+        self.assertEqual(result['range'], [0, 2])
+        self.assertEqual(result['bytes_read'], 2)
+        self.assertTrue(result['write_in_progress'])
+        self.assertEqual(result['content_state'], 'unknown')
+
+    def test_inode_replacement_distinguished_from_content_change(self):
+        (self.ws/'out.txt').write_text('first\n')
+        self.make('out.txt')
+        (self.ws/'next.txt').write_text('first\n')
+        (self.ws/'next.txt').replace(self.ws/'out.txt')
+        source = self.sources(101.0)['out.txt']
+        self.assertTrue(source['replaced'])
+        self.assertFalse(source['content_changed'])
+        self.assertIsNone(source['delta_bytes'])
+
+    def test_persistence_failure_is_explicit_and_not_counted(self):
+        self.make()
+        baseline = (self.observer.directory/'record-0000.json').read_bytes()
+        with patch('codinator.observations._write_once', side_effect=OSError('disk full')):
+            with self.assertRaisesRegex(Problem, 'Cannot persist'):
+                self.observer.observe(101.0)
+        self.assertEqual(self.observer.records, 1)
+        self.assertFalse((self.observer.directory/'record-0001.json').exists())
+        self.assertEqual((self.observer.directory/'record-0000.json').read_bytes(), baseline)
+
+    def test_corrupt_fragment_fails_status(self):
+        (self.ws/'out.txt').write_text('first\n')
+        self.make('out.txt')
+        record = observation_status(self.ctx, 'OB', 1)['latest']
+        source = next(s for s in record['sources'] if s['base']=='workspace')
+        (self.observer.directory/source['fragment_path']).write_text('other\n')
+        with self.assertRaisesRegex(Problem, 'integrity mismatch'):
+            observation_status(self.ctx, 'OB', 1)
+
+    def test_corrupt_record_is_not_silently_skipped(self):
+        self.make()
+        (self.observer.directory/'record-0000.json').write_bytes(b'not-json')
+        with self.assertRaises(Problem):
+            observation_status(self.ctx, 'OB', 1)
+
+    def test_history_collision_is_explicit(self):
+        self.make()
+        with self.assertRaises(OSError):
+            Observer(self.task,self.ctx,1,workspace=self.ws)
+
+
+class ObservationEngineTests(unittest.TestCase):
+    def setUp(self):
+        import test_engine as fixtures
+        fixtures.EngineTests.setUp(self)
+        self.store.request_control('test', 'cancel')
+        self.engine.run('test')
+        (self.workspace/'handoff.md').write_text(HANDOFF_DOC.replace('Observe demo.', 'Implement product.py with VALUE=42.'))
+        self.git('add','handoff.md')
+        self.git('commit','-qm','Freeze observation handoff')
+        raw = dict(self.raw, id='observe-engine', handoff_protocol=1, checkpoint_mode='observe',
+                   checkpoint_seconds=1, git={'branch':'task','base_commit':self.git('rev-parse','HEAD')})
+        self.path.write_text(json.dumps(raw))
+        self.engine.submit(load_manifest(self.path))
+
+    def test_observations_cannot_replace_missing_final_delivery(self):
+        os.environ['FAKE_MODE']='missing-delivery'
+        self.engine.run('observe-engine')
+        task = self.store.get('observe-engine')
+        self.assertEqual(task['state'], 'blocked', task['reason'])
+        attempt = self.engine.attempt_path(task)
+        self.assertTrue((attempt/'observations/record-0000.json').is_file())
+        self.assertFalse((attempt/'codex/outcome.json').exists())
+
+
+class ObservationAdditionalConfigTests(ManifestBase):
+    def test_nonexistent_directory_and_empty_components_rejected(self):
+        for path in ('not-created/', 'a//b.txt'):
+            with self.subTest(path=path), self.assertRaises(Problem):
+                self.load(self.base(checkpoint_mode='observe', checkpoint_outputs=[path]))

@@ -1,0 +1,39 @@
+{
+  "version": 2,
+  "handoff_protocol": 1,
+  "id": "OUTPUT-OBSERVATION-DEMO",
+  "workspace": "/absolute/path/to/independent-pilot-checkout",
+  "git": {
+    "branch": "demo-guidance",
+    "base_commit": "0000000000000000000000000000000000000000"
+  },
+  "handoff": "handoff.md",
+  "allowed_paths": [
+    "add.py",
+    "tests/test_add.py"
+  ],
+  "checks": [
+    {
+      "name": "unit",
+      "argv": [
+        "python3",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-v"
+      ],
+      "timeout_seconds": 120
+    }
+  ],
+  "max_rounds": 2,
+  "max_seconds": 1800,
+  "attempt_seconds": 5400,
+  "checkpoint_seconds": 1800,
+  "checkpoint_mode": "observe",
+  "checkpoint_outputs": [
+    "tmp/progress.json"
+  ]
+}

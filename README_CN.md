@@ -176,3 +176,29 @@ PYTHONPATH=src python3 -B -m unittest discover -s tests -v
 即使原交付已存在也不覆盖。执行命令与完整约束见英文 README 的 S03 harness improvements。
 
 本次合成/fake-agent验证不能宣称真实模型连通或 S04 已完成；旧 S03 证据及状态保留原样。
+
+## 只读观察软检查（新 Pi 任务推荐）
+
+新 v2 Pi 任务使用 `handoff_protocol: 1`、`checkpoint_mode: "observe"` 和
+`checkpoint_seconds: 1800`。示例见 [observation-task.json](examples/observation-task.json)。
+单进程硬限仍设 `attempt_seconds: 5400`。同阶段共享原预算。
+省略新模式时保留已发布的报告行为。observe 不支持 external 宿主实施，
+也不能与 `checkpoint_format`、`first_checkpoint`、`counterexamples` 同用。
+
+`checkpoint_outputs` 可省略或为空，最多声明 16 个不同的项目相对文件路径。
+可声明 handoff 约定的日志和进度文件，不接受目录、通配符、点路径、保护路径和符号链接。
+控制器不搜索文件、不运行项目命令、不生成项目进度。handoff 说明输出和所需行为证据。
+
+控制器在启动及每个周期保存不可覆盖、绑定 task/round/attempt 的记录。
+记录 UTC、elapsed、来源范围、大小增量、工具开始/结束计数及有界活动工具 ID。
+活动工具期间也采集。RPC 日志只引用元数据，不分析或复制模型对话。
+声明文件每项最多采样 32 KiB，每次片段单独保存。哈希只绑定采样字节，不绑定整文件。
+启动基线区分旧产物。缺失、不可读、非文本、部分 JSON、并发写入、替换和截断明确记录未知。
+
+Pi 无需定时报告。观察器不发送 checkpoint steer，也没有五分钟报告超时。
+静默或缺少产物不会自动停工。硬限、取消、最终 summary/evidence 和非作者独立验收保持。
+控制器证据写入失败必须明确失败。status 显示观察数、最近记录和证据路径；
+证据损坏或绑定错误明确报错。观察记录不证明进度、测试通过或 accepted。
+主 Codex 按实际行为证据判断纠偏，需要时使用原生 pause。
+核验工具已停并保存 Git 现场后，在剩余预算内发布新的指导 handoff。
+观察器不启动指导模型，不追溯迁移旧任务。

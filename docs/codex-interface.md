@@ -133,3 +133,39 @@ Codex 回答后，新 Pi attempt 实现加法函数，独立 Codex 复测并验�
 下一 Pi prompt 的回复关联、实际模型进程证据及最终独立 verdict。记录人工介入次数
 及原因、格式错误耗时和轮次、重复阻塞，以及停止后有哪些证据足以继续处理。
 没有真实证据时明确标记“未运行”，不预设改善幅度；试点结果与代码验收分别报告。
+
+## Passive output observations (recommended for new Pi tasks)
+
+New v2 Pi tasks with `handoff_protocol: 1` can use `checkpoint_mode: "observe"`
+and `checkpoint_seconds: 1800`. See [the example](examples/observation-task.json).
+Keep the process hard limit at `attempt_seconds: 5400` and publish the shared stage
+budget as usual. Omission preserves the frozen report-based behavior. Observation
+does not support `implementation: "external"`, or the legacy `checkpoint_format`,
+`first_checkpoint`, and `counterexamples` fields.
+
+`checkpoint_outputs` is optional: at most 16 distinct workspace-relative file paths.
+It can name existing project logs or progress files specified by the handoff. No
+directory paths, wildcards, dot components, protected paths or symlink traversal
+are allowed. The controller does not discover files or create progress producers.
+The handoff defines what output should exist and what behavior it evidences.
+
+At startup and each interval the controller records immutable attempt-bound
+observations, including UTC/elapsed time, source byte ranges, size changes and tool
+start/end counts with bounded active IDs. Busy tools do not delay sampling. RPC logs
+are referenced by metadata only; model dialogue is not analyzed or copied. Declared
+files are sampled at most 32 KiB each. Each sample has its own immutable fragment;
+sample hashes identify those bytes, not the whole source file. Replaced/truncated
+files, missing/unreadable sources, partial JSON, non-text and concurrent writes are
+explicitly unknown. Old output is distinguished by the startup baseline.
+
+Pi has no periodic report obligation. The observer sends no checkpoint steering
+request and imposes no five-minute response timeout. Silence, missing artifacts or
+partial output do not stop Pi. Cancellation, hard limits, final summary/evidence
+delivery and independent acceptance remain required. Controller evidence-write
+failure is an explicit error, not a successful observation. `status.observation`
+exposes the count, latest record and evidence path; corrupt or wrongly bound evidence
+fails explicitly. These records are unverified observations, never project verdicts.
+Main Codex assesses actual behavioral evidence and uses native `pause` when guidance
+is needed. After confirming tools stopped, it preserves Git state and publishes a
+linked corrective handoff under the remaining budget. No guidance model is launched
+by the observer, and historical task contracts are not migrated.
