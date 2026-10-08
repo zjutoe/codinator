@@ -345,7 +345,9 @@ if '--mode' in sys.argv:
         elif command['type'] == 'prompt':
             emit({'type': 'response', 'id': 'prompt', 'success': True})
             emit({'type': 'agent_start'})
-            pi(command['message'])
+            # Real Pi receives both the appended system instructions and RPC task message.
+            instructions = sys.argv[sys.argv.index('--append-system-prompt') + 1]
+            pi(instructions + '\n' + command['message'])
 elif 'queue' in sys.argv:
     if MODE == 'notify-fail':
         raise SystemExit(7)

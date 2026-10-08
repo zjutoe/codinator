@@ -23,8 +23,10 @@ class LocalContext(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix='closeout-', dir='/tmp')
         self.addCleanup(self.temp.cleanup)
         self.context = Path(self.temp.name)
-        self.task = {'id': 'T', 'round': 1, 'attempt': 1,
-                     'manifest': {'version': 2, 'handoff_protocol': 1}}
+        self.task = {'id': 'T', 'round': 1, 'attempt': 1, 'expected_digest': 'a' * 40,
+                     'manifest': {'version': 2, 'id': 'T', 'handoff_protocol': 1,
+                         'git': {'branch': 'task/T', 'base_commit': 'a' * 40},
+                         'checks': [{'name': 'unit', 'argv': ['true'], 'timeout_seconds': 1}]}}
         self.events = []
 
 
