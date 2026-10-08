@@ -9,7 +9,7 @@
 - Version 1 tasks are read-only history. Do not execute/resume them or rewrite their state, snapshots, blobs, verdicts, rounds or budgets. Prepare explicit successors using actual remaining budget and any original deadline; never silently reset allowances. Upgrade only after old active processes have stopped.
 - Only the controller writes workflow state. Merge/push requires separate explicit authorization and execution by Pi/Codex. No automatic integration stage.
 - No unsandboxed fallback. Inspect actual process exit and protocol completion. Keep models fixed by the contract; never silently switch them.
-- Changes to lifecycle, persistence or isolation require meaningful fault-injection tests and non-author review. Mock/fake-agent tests are not real model connectivity evidence.
+- Changes to lifecycle, persistence or isolation require meaningful fault-injection tests and non-author review. Mock/fake-agent tests are not real model connectivity evidence. Keep fake-agent fixtures aligned with native input layers and bound delivery contracts; verify frozen instructions at their actual delivery location.
 - Store credentials and raw runtime outside this repository; never print authentication contents. Keep the implementation small and standard-library based.
 
 - For legacy compact-checkpoint tasks, main Codex declares a concrete first behavioral outcome and named counterexamples. Pi reports short structured progress before more work at a safe boundary; the receiving Codex judges evidence, not activity or format compliance. Full final/help/stop summaries remain mandatory. Prepare permissions and dependencies before starting the budget.
