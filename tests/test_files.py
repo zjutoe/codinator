@@ -26,7 +26,7 @@ class FilesTests(unittest.TestCase):
         self.assertEqual(json.loads(path.read_text()), {'first': 1})
 
     def test_manifest_rejects_scope_escape_and_contract_write(self):
-        base = {'version': 1, 'id': 'task', 'workspace': str(self.root), 'handoff': 'handoff.md',
+        base = {'version': 2, 'git': {'branch': 'task', 'base_commit': 'a' * 40}, 'id': 'task', 'workspace': str(self.root), 'handoff': 'handoff.md',
                 'allowed_paths': ['product.py'], 'checks': [{'name': 'unit', 'argv': ['true']}]}
         path = self.root / 'manifest.json'
         path.write_text(json.dumps(base))
@@ -43,8 +43,8 @@ class FilesTests(unittest.TestCase):
                 with lock(self.root / 'lock'):
                     self.fail('second owner acquired lock')
 
-    def test_allowed_directory_cannot_contain_exclusion(self):
-        value = {'version': 1, 'id': 'T', 'workspace': str(self.root), 'handoff': 'handoff.md',
+    def test_new_publication_rejects_legacy_exclusions(self):
+        value = {'version': 2, 'git': {'branch': 'task', 'base_commit': 'a' * 40}, 'id': 'T', 'workspace': str(self.root), 'handoff': 'handoff.md',
                  'allowed_paths': ['src/'], 'excludes': ['src/cache/'],
                  'checks': [{'name': 'check', 'argv': ['true']}]}
         path = self.root / 'config.json'

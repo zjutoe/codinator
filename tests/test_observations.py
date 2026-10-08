@@ -175,14 +175,13 @@ class ObservationConfigTests(ManifestBase):
         self.assertNotIn("checkpoint_mode", m)
         self.assertEqual(m["checkpoint_seconds"], 600)
 
-    def test_v1_has_no_observe_mode(self):
+    def test_v1_publication_is_rejected_even_without_observe_mode(self):
         value = dict(self.base())
         value["version"] = 1
         del value["git"]
         del value["handoff_protocol"]
-        m = self.load(value)
-        self.assertEqual(m["version"], 1)
-        self.assertNotIn("checkpoint_mode", m)
+        with self.assertRaisesRegex(Problem, "read-only history"):
+            self.load(value)
 
 
 class ObserveLifecycleTests(unittest.TestCase):
@@ -822,7 +821,7 @@ class ObserveWorkerPromptTests(unittest.TestCase):
              patch.object(agents_mod, "Closeout", return_value=object()):
             agents_mod.worker(self.task, self.attempt_dir, self.private_dir,
                               object(), {"timeout": 30.0})
-        prompt = mock_worker.call_args[0][0]
+        prompt = mock_worker.call_args.kwargs["delivery_instructions"]
         self.assertIn("Passive output observation every 60 seconds", prompt)
         self.assertNotIn("within five minutes", prompt)
         self.assertNotIn("valid progress report", prompt)

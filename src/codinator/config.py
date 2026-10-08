@@ -6,8 +6,6 @@ import re
 from .files import Problem, under
 from .handoff import validate_document
 
-DEFAULT_EXCLUDES = [".venv/", ".pytest_cache/"]
-
 
 def positive(value, name):
     if type(value) is not int or value <= 0:
@@ -45,10 +43,10 @@ def load_manifest(path):
                     "checkpoint_outputs", "stage", "implementation"}
     if type(raw) is not dict or set(raw) - allowed_keys:
         raise Problem("Unknown manifest field(s)")
-    if raw.get("version") not in (1, 2) or type(raw.get("version")) is not int:
-        raise Problem("Manifest version must be 1 (published legacy tasks) or 2 (Git checkpoints)")
+    if type(raw.get("version")) is not int or raw["version"] != 2:
+        raise Problem("New publication requires manifest version 2; version 1 tasks are read-only history")
     if 'handoff_protocol' in raw:
-        if raw['version'] != 2 or type(raw['handoff_protocol']) is not int or raw['handoff_protocol'] != 1:
+        if type(raw['handoff_protocol']) is not int or raw['handoff_protocol'] != 1:
             raise Problem('handoff_protocol requires version 2 and integer protocol version 1')
     if 'checkpoint_format' in raw:
         if raw['checkpoint_format'] != 'compact' or raw.get('handoff_protocol') != 1:
@@ -66,8 +64,6 @@ def load_manifest(path):
         mode = raw['checkpoint_mode']
         if type(mode) is not str or mode != 'observe':
             raise Problem(f"Unknown checkpoint_mode {mode!r}; only 'observe' is supported")
-        if raw.get('version') != 2:
-            raise Problem("checkpoint_mode 'observe' requires manifest version 2")
         if raw.get('handoff_protocol') != 1:
             raise Problem("checkpoint_mode 'observe' requires handoff_protocol 1")
         if 'checkpoint_seconds' not in raw:
@@ -86,18 +82,15 @@ def load_manifest(path):
         validate_stage(raw['stage'])
         if raw.get('handoff_protocol') != 1:
             raise Problem('shared stages require handoff_protocol 1')
-    if raw['version'] == 2:
-        spec = raw.get('git')
-        if type(spec) is not dict or set(spec) != {'branch', 'base_commit'}:
-            raise Problem('Version 2 requires git.branch and git.base_commit')
-        if not isinstance(spec['branch'], str) or not spec['branch'] or spec['branch'].startswith('-'):
-            raise Problem('git.branch must be a branch name')
-        if not isinstance(spec['base_commit'], str) or not re.fullmatch(r'(?:[0-9a-f]{40}|[0-9a-f]{64})', spec['base_commit']):
-            raise Problem('git.base_commit must be an exact commit SHA')
-        if 'excludes' in raw or 'integration' in raw:
-            raise Problem('Version 2 uses fixed Git ignore rules and task-local commits; excludes/integration are legacy-only')
-    elif 'git' in raw:
-        raise Problem('Git checkpoints require manifest version 2')
+    spec = raw.get('git')
+    if type(spec) is not dict or set(spec) != {'branch', 'base_commit'}:
+        raise Problem('Version 2 requires git.branch and git.base_commit')
+    if not isinstance(spec['branch'], str) or not spec['branch'] or spec['branch'].startswith('-'):
+        raise Problem('git.branch must be a branch name')
+    if not isinstance(spec['base_commit'], str) or not re.fullmatch(r'(?:[0-9a-f]{40}|[0-9a-f]{64})', spec['base_commit']):
+        raise Problem('git.base_commit must be an exact commit SHA')
+    if 'excludes' in raw or 'integration' in raw:
+        raise Problem('Version 2 uses fixed Git ignore rules and task-local commits; excludes/integration are legacy-only')
     if not isinstance(raw.get("id"), str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", raw["id"]):
         raise Problem("Invalid task id")
     root = Path(raw["workspace"]).expanduser().resolve(strict=True)
@@ -137,15 +130,6 @@ def load_manifest(path):
             seen.add(p)
             if (root / p).is_dir():
                 raise Problem(f"checkpoint_outputs path must be a file, not a directory: {p}")
-    raw.setdefault("excludes", DEFAULT_EXCLUDES.copy() if raw['version'] == 1 else [])
-    if not isinstance(raw["excludes"], list):
-        raise Problem("excludes must be an array")
-    raw["excludes"] = [relative(p) for p in raw["excludes"]]
-    if under(raw["handoff"], raw["excludes"]):
-        raise Problem("Cannot exclude the handoff")
-    for p in raw["allowed_paths"]:
-        if under(p.rstrip("/"), raw["excludes"]) or any(under(e.rstrip('/'), [p]) for e in raw['excludes']):
-            raise Problem("Allowed paths cannot be excluded from snapshots")
     names = set()
     for check in raw["checks"]:
         if type(check) is not dict or set(check) - {"name", "argv", "timeout_seconds"}:
@@ -167,24 +151,4 @@ def load_manifest(path):
         deadline_timestamp(raw['deadline_utc'])
     if raw.get("notify_thread") is not None and (not isinstance(raw["notify_thread"], str) or not raw["notify_thread"].strip()):
         raise Problem("notify_thread must be a nonempty string")
-    if "integration" in raw:
-        spec = raw["integration"]
-        if type(spec) is not dict or set(spec) != {"target_workspace", "target_branch", "base_commit", "planning_paths"}:
-            raise Problem("integration requires target_workspace, target_branch, base_commit and planning_paths")
-        target = Path(spec["target_workspace"]).expanduser().resolve(strict=True)
-        if not target.is_dir() or target == root or target.is_relative_to(root) or root.is_relative_to(target):
-            raise Problem("Integration target must be a separate checkout")
-        if not isinstance(spec["target_branch"], str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_/-]*", spec["target_branch"]):
-            raise Problem("Invalid integration target branch")
-        if not isinstance(spec["base_commit"], str) or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", spec["base_commit"]):
-            raise Problem("Integration requires an exact base commit")
-        if not isinstance(spec["planning_paths"], list):
-            raise Problem("integration planning_paths must be an array")
-        spec["planning_paths"] = [relative(p) for p in spec["planning_paths"]]
-        if any(under(p.rstrip("/"), spec["planning_paths"]) or
-               any(under(q.rstrip("/"), [p]) for q in spec["planning_paths"]) for p in raw["allowed_paths"]):
-            raise Problem("Integration planning paths may not overlap implementation paths")
-        spec["target_workspace"] = str(target)
-    if raw['version'] == 2:
-        del raw['excludes']
     return raw

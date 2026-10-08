@@ -46,7 +46,7 @@ class Store:
                 round INTEGER NOT NULL DEFAULT 1, attempt INTEGER NOT NULL DEFAULT 0,
                 started REAL, deadline REAL, pid INTEGER, pid_start TEXT,
                 reason TEXT NOT NULL DEFAULT '', control TEXT,
-                feedback TEXT NOT NULL DEFAULT '', last_issues TEXT NOT NULL DEFAULT '',
+                feedback TEXT NOT NULL DEFAULT '',
                 phase TEXT NOT NULL DEFAULT '', expected_digest TEXT NOT NULL,
                 created REAL NOT NULL, updated REAL NOT NULL);
             CREATE TABLE IF NOT EXISTS events (
@@ -126,7 +126,7 @@ class Store:
 
     def _update(self, task_id, fields):
         valid = {"state", "round", "attempt", "started", "deadline", "pid", "pid_start", "reason", "control",
-                 "feedback", "last_issues", "phase", "expected_digest", "review_resume", "attempt_seconds_override", "integration"}
+                 "feedback", "phase", "expected_digest", "review_resume", "attempt_seconds_override", "integration"}
         if not fields or set(fields) - valid:
             raise ValueError("Invalid state update")
         fields["updated"] = time.time()
@@ -141,10 +141,6 @@ class Store:
     def event(self, task_id, kind, payload):
         self.db.execute("INSERT INTO events(task_id,time,kind,payload) VALUES(?,?,?,?)",
                         (task_id, time.time(), kind, json.dumps(payload, ensure_ascii=False)))
-
-    def notify(self, task_id, message):
-        with self.db:
-            self._notify(task_id, message)
 
     def finish(self, task_id, message, **fields):
         """Terminal state and its notification are one durable transaction."""

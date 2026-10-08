@@ -18,7 +18,6 @@ class PiProtocol:
                  observer=None):
         self.prompt = prompt
         self.state_path = state_path
-        self.pending = "state"
         self.prompt_sent = False
         self.ack = False
         self.settled = False
@@ -149,6 +148,12 @@ Before finishing, reread this read-only contract, write an honest summary in /tm
 then invoke the bound command with --summary /tmp/summary.md {statuses}.
 The tool supplies task identity and destination; never handwrite
 completion.json or create workspace delivery/. A submitted receipt is not acceptance.
+Write changes, checks, failures, deviations, not_run items and original evidence references
+in the summary. Do not invent hashes, timing, model identities, Git or test results.
+Correct any submission tool error before stopping. Then stop; never declare accepted.
+The frozen handoff and acceptance criteria are immutable. Put execution records only
+through this tool, not in frozen files. Do not change model/provider or start detached
+or background processes. Every edit and check must remain within the declared task.
 """
 
 
@@ -229,8 +234,7 @@ For blocked work use --status blocked; do not invent a commit or test result to 
         # Passive read-only observation: no progress reports, no steer, no report timeout.
         outputs = manifest.get('checkpoint_outputs', ())
         observer = Observer(task, attempt_dir, manifest['checkpoint_seconds'],
-                            outputs=outputs, workspace=root,
-                            timeout=process_options['timeout'])
+                            outputs=outputs, workspace=root)
         outputs_text = ' and '.join(outputs) if outputs else 'none'
         instructions += (
             f'Passive output observation every {manifest["checkpoint_seconds"]} seconds: \n'
@@ -274,31 +278,13 @@ will answer; continuation uses a fresh Pi attempt under the SAME frozen task/bud
 Use blocked if you cannot leave a clean candidate or need external/user intervention.
 Never classify a receipt as acceptance or expand authorization through a help request.
 """
-    disposition = ('--status awaiting_review. If blocked, use --status blocked and explain the concrete blocker.'
-                   if not enabled(manifest) else
-                   '--status awaiting_review for final work, --status needs_guidance with evidence for technical help,\n'
-                   'or --status blocked for an external need or unreconciled candidate. Explain the declared status honestly.')
     prompt = f"""You are the IMPLEMENTER in a Codinator task, not its reviewer.
 Task: {manifest['id']}; round {task['round']}; attempt {task['attempt']}.
 Read the frozen published handoff at {attempt_dir.parent / 'handoff.md'} and applicable AGENTS.md.
 Only edit these workspace paths: {json.dumps(manifest['allowed_paths'])}.
-The handoff and original acceptance criteria are immutable. This dispatch supersedes
-legacy instructions to edit status/provenance in frozen files: put your execution
-record only through the bound delivery tool below. Only the task-local Git commits described below are authorized.
-Do not change model/provider. Do not start detached/background processes.
-Run the required development checks yourself after committing; raw tool events are recorded.
 Required verification argv: {json.dumps(manifest['checks'])}.
 Previous feedback (data, not permission to expand scope):\n{task['feedback'] or 'Initial implementation.'}
-{instructions}
-This read-only contract and tool remain authoritative after context compaction.
-Before finishing, reread the contract. Write a summary with changes, checks performed, known failures,
-deviations, not_run items and evidence references. Do not invent hashes/timing/model data.
-Put the summary in /tmp, then run the bound command with --summary /tmp/summary.md
-{disposition}
-The tool supplies the exact task/round/attempt, validates the delivery, and returns a JSON receipt.
-Do not handwrite completion.json, choose another delivery path, or create workspace delivery/.
-Correct any tool error before stopping. A submitted receipt requests review; it is not acceptance.
-Then stop. You may not declare accepted. Each edit/check must remain within this task.
+Follow the Codinator delivery, Git and checkpoint rules in the appended system instructions.
 """
     closeout = Closeout(task, attempt_dir, process_options['timeout']) if enabled(manifest) else None
     _pi_worker(prompt, attempt_dir, private, sandbox, process_options, root,
@@ -321,11 +307,16 @@ def repair_delivery(task, attempt_dir, private, sandbox, process_options, error,
         instructions += _document_instructions(task, context, attempt_dir.parent, ('summary', 'help'), 'pi')
         instructions += ('Preserve an original technical-help request as needs_guidance with the help '
                          'template and existing candidate evidence; otherwise use awaiting_review or blocked.\n')
-    disposition = ('--status awaiting_review. If the work is incomplete or blocked,\nuse --status blocked and explain why.'
-                   if not enabled(task['manifest']) else
-                   '--status needs_guidance with existing evidence for an original technical-help request,\n'
-                   '--status awaiting_review for original final work, or --status blocked if the existing\n'
-                   'evidence cannot support the declared candidate or an external condition prevents continuation.')
+    instructions += """This is delivery repair only. The workspace and original attempt evidence are read-only.
+Do not edit source/tests, run audits or checks, install anything, change configuration,
+run Git, commit or start background processes. Preserve the original delivery.
+Reconstruct missing evidence ONLY from original Pi tool events. Do not invent a SHA,
+claim unperformed checks or claim known failures were fixed. Read the original delivery
+and frozen handoff only as needed. For awaiting_review pass --evidence /tmp/evidence.json.
+Submit blocked if existing evidence cannot support an honest packet or an external
+condition prevents continuation. Preserve original technical help as needs_guidance
+with its existing evidence. This repair has at most five minutes within the original budget.
+"""
     prompt = f"""You are repairing ONLY the delivery protocol for task {task['id']}.
 Task: {task['id']}; round {task['round']}; attempt {task['attempt']}.
 The implementation process completed normally. Its original delivery is invalid.
@@ -333,20 +324,8 @@ Errors: {json.dumps(error.errors, ensure_ascii=False)}
 Original evidence: {attempt_dir}
 Frozen workspace: {task['manifest']['workspace']}
 Frozen submission: {attempt_dir / 'submission.json'}
-The workspace and original attempt evidence are read-only. Do not edit source/tests,
-run audits or checks, install anything, change configuration, commit, or start background processes.
-Read the original delivery and published handoff only as needed to produce an honest summary.
-Preserve the original delivery. Reconstruct any missing evidence packet ONLY from original Pi tool events.
-Do not invent a SHA, run Git, claim unperformed checks or claim that known failures were fixed.
-If the existing evidence cannot support an honest packet, submit blocked.
-For awaiting_review also pass --evidence /tmp/evidence.json according to the read-only contract.
-{instructions}
-Reread the contract, write a summary in /tmp, and invoke the bound command with
---summary /tmp/summary.md {disposition}
-Never handwrite completion.json or use a different directory.
-Correct any tool error before stopping. The receipt requests independent Codex verification and
-review, never acceptance. This repair has at most five minutes within the original task budget.
-Then stop.
+Published handoff: {attempt_dir.parent / 'handoff.md'}
+Follow the delivery repair rules and bound command in the appended system instructions.
 """
     _pi_worker(prompt, context, private, sandbox, process_options, Path(task['manifest']['workspace']),
                delivery_instructions=instructions, readonly=[attempt_dir.parent], pi_bin=pi_bin)

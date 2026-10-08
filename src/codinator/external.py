@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 
 from .agents import _document_instructions
-from .delivery import prepare_contract, validate_delivery, read_submission, select_delivery
+from .delivery import prepare_contract, read_delivery, select_delivery
 from .engine import _repo_lock, _source, _budget_timeout, _require_current
 from .files import Problem, file_info, write_json
 from .handoff import verify_protocol, validate_document
@@ -119,7 +119,7 @@ def finish(engine, task_id, artifacts=None):
                 raise Problem('External ownership record is missing')
             attempt = engine.attempt_path(task)
             delivery = attempt / 'delivery'
-            status = validate_delivery(delivery, task_id, task['round'], task['attempt'])
+            status, packet = read_delivery(delivery, task)
             if status == 'blocked':
                 select_delivery(attempt, delivery)
                 release_external(store, task, 'External author stopped; see bound summary', state='blocked',
@@ -130,7 +130,6 @@ def finish(engine, task_id, artifacts=None):
             start = original_start(store, task, attempt)
             _budget_timeout(start['implementation_deadline'], 1)
             _budget_timeout(deadline_for(store, task, time.time()), 1)
-            packet = read_submission(delivery, task)
             if packet is None:
                 raise Problem('External review requires a complete candidate/check packet')
             raw = read_artifacts(task['manifest'], json.loads(_read(artifacts)) if artifacts is not None else None, directory=attempt)
@@ -144,7 +143,7 @@ def finish(engine, task_id, artifacts=None):
                        'files': {name: file_info(attempt / name) for name in names},
                        'artifacts': raw})
             claimed = task | {'expected_digest': candidate}
-            pinned, _ = checkpoint(store, claimed, engine.sandbox)
+            pinned, _ = checkpoint(store, claimed)
             release_external(store, task, 'External delivery queued for independent review',
                              state='review_ready', phase='external-delivered',
                              expected_digest=candidate, review_resume=pinned)

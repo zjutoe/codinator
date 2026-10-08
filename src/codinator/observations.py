@@ -53,7 +53,7 @@ class Observer:
     NOTE = ('Observation of existing logs, tool events and declared artifacts; '
             'an unverified claim, not progress, test success or acceptance.')
 
-    def __init__(self, task, context, interval, outputs=(), workspace=None, timeout=None):
+    def __init__(self, task, context, interval, outputs=(), workspace=None):
         if type(interval) is not int or interval <= 0:
             raise Problem('checkpoint_seconds must be a positive integer')
         if len(outputs) > _MAX_OUTPUTS:

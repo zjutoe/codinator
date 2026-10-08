@@ -1,7 +1,7 @@
 # 验证方法与历史记录
 
-当前仅保留 Codex 主界面管理后台服务的流程。模型执行、协议检查、冻结快照、验收和返工
-由控制器完成。使用方法见 [项目说明](../README.md) 和 [主界面协议](../docs/codex-interface.md)。
+当前由 Codex 主界面管理后台服务。控制器负责派发、协议检查、预算和证据传递；
+Pi／Codex 执行 Git 和项目检查，独立 Codex 验收。源码版本由 Git commit SHA 固定。使用方法见 [项目说明](../README.md) 和 [主界面协议](../docs/codex-interface.md)。
 
 ## 当前验证方法
 
@@ -15,11 +15,19 @@ python3 -B validation/native_sandbox.py
 `native_sandbox.py` 只验证真实 bubblewrap 的文件权限边界，不调用模型。
 沙箱不可用时应明确报告失败，不改成无沙箱运行。
 
-`live_smoke.py` 和 `integration_smoke.py` 是需显式运行的完整控制器联调脚本，
-分别验证实施 → 检查 → 审查，以及验收后授权的提交与合并；在新临时仓库内执行。
-它们是开发验证工具，会实际调用模型并使用额度，不能用假 agent 结果代替其连通性证据。
-原单独调用审查模型的探针已移除。认证、私有配置、完整会话与任务运行数据均保存在仓外，
-分享时只导出所需脱敏摘要。
+`live_smoke.py` 使用 v2 契约，在新的独立普通 checkout 中准备分支、已提交的只读
+handoff 和测试 oracle。默认只准备夹具，不调用模型。显式 `--run` 才调用真实
+Pi + Bonsai 和独立 Codex；总预算 40 分钟、最多两轮、单次 20 分钟，观察间隔 10 分钟。
+Pi 提交后自行运行检查，再通过绑定交付工具提交证据。独立 Codex 复测并验收。
+
+```bash
+python3 -B validation/live_smoke.py --output-parent /path/to/writable-parent
+python3 -B validation/live_smoke.py --run --output-parent /path/to/writable-parent
+```
+
+每次命令创建新的夹具，不修改已有项目。准备夹具或假 agent 通过都不能证明模型连通性。
+`integration_smoke.py` 已移除：其旧版快照和自动合并接口不再存在。历史验收记录仍保留。
+认证、私有配置、完整会话与任务运行数据均保存在仓外，分享时只导出所需脱敏摘要。
 
 ## 历史材料的边界
 
