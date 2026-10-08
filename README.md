@@ -18,6 +18,8 @@ control fields and evidence integrity are controller responsibilities; whether t
 content is true, useful or satisfies the task is the responsibility of its authors
 and receiving agents.
 
+Projects adopting Codinator can use the [project AGENTS.md guide](docs/project-agents.md) (Chinese), extracted from AlphaLab. It includes copyable scheduling agreements and distinguishes project authorization from relay capabilities.
+
 ## Setup
 
 Linux, one user, serial tasks. Python 3.11+, authenticated `pi` and `codex`, `git`, and

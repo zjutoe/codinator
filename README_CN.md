@@ -6,6 +6,8 @@ Codinator 为主 Codex、Pi + Bonsai 和独立 Codex 提供任务交接协议与
 
 本轮实现依据 [交接协议与任务推进改造计划](docs/handoff-review-refactor-plan.md)。新 v2 任务可显式启用 `handoff_protocol: 1`；旧契约保留原行为。格式通过不表示内容合格，文档内容由作者及接收的 Codex／Pi 负责核验。
 
+其他项目接入时可参考[项目 AGENTS.md 调度约定](docs/project-agents.md)。该文档从 AlphaLab 提取可复制的通用约束，并区分项目授权、旧契约与当前控制器能力。
+
 ## 环境与安装
 
 Linux、单用户、串行任务；Python 3.11+，已认证的 `pi`、`codex`，以及 `git`、`bwrap`。Python 运行时无第三方依赖。
