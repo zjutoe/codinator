@@ -305,8 +305,6 @@ def repair_delivery(task, attempt_dir, private, sandbox, process_options, error,
     instructions = _delivery_instructions(context, submit, help_allowed=enabled(task['manifest']))
     if enabled(task['manifest']):
         instructions += _document_instructions(task, context, attempt_dir.parent, ('summary', 'help'), 'pi')
-        instructions += ('Preserve an original technical-help request as needs_guidance with the help '
-                         'template and existing candidate evidence; otherwise use awaiting_review or blocked.\n')
     instructions += """This is delivery repair only. The workspace and original attempt evidence are read-only.
 Do not edit source/tests, run audits or checks, install anything, change configuration,
 run Git, commit or start background processes. Preserve the original delivery.

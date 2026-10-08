@@ -102,7 +102,8 @@ class PublicationFaultTests(unittest.TestCase):
     def test_existing_unused_database_column_and_values_are_preserved(self):
         store = Store(self.root / 'state')
         self.addCleanup(store.db.close)
-        store.add({'version': 2, 'id': 'T'}, 'a' * 40)
+        (self.root / '.git').mkdir()
+        store.add({'version': 2, 'id': 'T', 'workspace': str(self.root)}, 'a' * 40)
         columns = {r[1] for r in store.db.execute('PRAGMA table_info(tasks)')}
         self.assertNotIn('last_issues', columns)
         store.db.execute("ALTER TABLE tasks ADD COLUMN last_issues TEXT NOT NULL DEFAULT ''")
@@ -140,7 +141,8 @@ class WorkerInstructionTests(unittest.TestCase):
 
     def test_worker_has_one_authoritative_instruction_block_and_scoped_task_message(self):
         from codinator import agents
-        self.task['feedback'] = 'Verified blocker: fix only the missing addition.'
+        self.task['feedback'] = json.dumps({'message': {'message_id': 'OB:previous:guidance'},
+            'summary': 'Verified blocker: fix only the missing addition.'})
         with patch.object(agents, '_pi_worker') as worker:
             agents.worker(self.task, self.attempt_dir, self.private_dir, object(), {'timeout': 30})
         prompt = worker.call_args.args[0]
@@ -174,7 +176,7 @@ class WorkerInstructionTests(unittest.TestCase):
         self.assertIn(str(self.attempt_dir), prompt)
         self.assertIn(str(self.attempt_dir / 'delivery-repair' / 'delivery-contract.json'), instructions)
         for required in ('read-only', 'run Git', 'ONLY from original Pi tool events',
-                         'at most five minutes', '--status needs_guidance', 'submit blocked',
+                         'at most five minutes', '--status needs_guidance', 'Submit blocked',
                          'Correct any submission tool error'):
             self.assertIn(required, instructions)
         self.assertFalse(worker.call_args.kwargs.get('git_write', False))
