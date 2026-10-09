@@ -28,7 +28,7 @@ systemctl --user enable --now codinator.service
 原生实施仍通过 Pi。任务 manifest 可指定模型身份：
 
 ```json
-"pi": {"provider": "strata", "model": "qwen3.8-flash-next-iq3_s", "thinking": "xhigh"}
+"pi": {"provider": "strata", "model": "qwen3.8-flash-next-iq3_s", "thinking": "high"}
 ```
 
 出现 `pi` 时三个字段均必填。发布前在 Pi 中配置准确的 provider 和模型 ID；地址和认证仍由 Pi 管理。
@@ -36,6 +36,7 @@ systemctl --user enable --now codinator.service
 省略此字段仍使用 `bonsai / bonsai2-27b / xhigh`，不向旧冻结 manifest 补写默认值。
 外部实施任务不接受此字段。模型身份随契约冻结，在发送任务前核验，交付修复和仅重试验收沿用同一身份。
 更换模型须发布新契约并沿用实际剩余额度，不能重置预算。指导与独立验收仍用 `gpt-6-astra / xhigh`。
+当前配置的 strata 模型在 Pi 中报告 `high`；请求 `xhigh` 后若被 Pi 降级，控制器会明确拒绝。
 参考 [strata manifest 示例](examples/strata-task.json)。运行身份是 Pi 的客户端报告，不证明服务端权重或模型质量。
 Pi 的客户端身份由 RPC 核验，不能证明远端服务实际加载的权重。
 

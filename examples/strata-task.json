@@ -44,6 +44,6 @@
   "pi": {
     "provider": "strata",
     "model": "qwen3.8-flash-next-iq3_s",
-    "thinking": "xhigh"
+    "thinking": "high"
   }
 }

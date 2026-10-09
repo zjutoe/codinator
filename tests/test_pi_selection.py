@@ -117,7 +117,7 @@ class SelectedPiLifecycleTests(unittest.TestCase):
                 return real_reviewer(*args, **kwargs)
 
         with patch('codinator.engine.reviewer', side_effect=unavailable):
-            task, source = self.run_selected('malformed-then-repair')
+            task, source = self.run_selected('missing-then-repair')
         self.assertEqual(task['state'], 'blocked', task['reason'])
         self.assert_pi_identity(source)
         self.assert_pi_identity(source / 'delivery-repair')

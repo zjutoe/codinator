@@ -42,7 +42,7 @@ Pi removes proxy variables and connects directly; Codex review/notifications ret
 Native implementation uses Pi. Select its identity with the optional manifest field:
 
 ```json
-"pi": {"provider": "strata", "model": "qwen3.8-flash-next-iq3_s", "thinking": "xhigh"}
+"pi": {"provider": "strata", "model": "qwen3.8-flash-next-iq3_s", "thinking": "high"}
 ```
 
 All three keys are required when `pi` is present. Configure the exact provider and model ID
@@ -54,6 +54,7 @@ The selected identity is frozen with the task and checked before sending a promp
 Delivery repair and review-only retries use the same identity. Changing models requires
 a new task contract with the actual remaining allowance, not a budget reset.
 Guidance and independent review remain `gpt-6-astra / xhigh`; there is no silent model switch.
+The configured strata model reports `high`; requesting `xhigh` is rejected if Pi lowers it.
 See [the strata manifest example](examples/strata-task.json). Runtime identity is Pi's
 client report, not proof of server weights or model quality.
 Pi RPC attests client configuration, not the weights loaded by the remote server.
