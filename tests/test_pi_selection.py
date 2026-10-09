@@ -100,7 +100,7 @@ class SelectedPiLifecycleTests(unittest.TestCase):
         self.assertEqual(task['state'], 'accepted', task['reason'])
         self.assert_pi_identity(out)
         argv = json.loads((out / 'codex/launch.json').read_text())['argv']
-        self.assertEqual(argv[argv.index('--model') + 1], 'gpt-6-astra')
+        self.assertEqual(argv[argv.index('-m') + 1], 'gpt-6-astra')
         self.assertIn('model_reasoning_effort="xhigh"', argv)
 
     def test_frozen_selection_rejects_contract_mutation(self):
