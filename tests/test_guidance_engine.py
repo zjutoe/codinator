@@ -248,9 +248,17 @@ class GuidanceEngineTests(unittest.TestCase):
                                              (final, 'review', 'review-prompt.txt')):
             snapshot = json.loads((source / f'{author}-templates.json').read_text())
             self.assertEqual(snapshot['contract_digest'], help_completion['message']['contract_digest'])
+            prompt = (source / prompt_file).read_text()
+            if author == 'pi':
+                argv = json.loads((source / 'pi/launch.json').read_text())['argv']
+                instructions = argv[argv.index('--append-system-prompt') + 1]
+            else:
+                instructions = prompt
             for name in snapshot['templates']:
                 frozen = (source.parent / snapshot['templates'][name]['path']).read_text()
-                self.assertIn(frozen, (source / prompt_file).read_text())
+                self.assertIn(frozen, instructions)
+                if author == 'pi':
+                    self.assertNotIn(frozen, prompt)
 
     def test_guiding_status_names_handler_request_and_existing_deadline(self):
         observed = []

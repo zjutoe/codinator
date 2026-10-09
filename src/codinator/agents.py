@@ -4,19 +4,22 @@ from pathlib import Path
 import time
 
 from .checkpoints import Checkpoints, Closeout
+from .config import pi_settings
 from .files import Problem, file_info, write_json
 from .delivery import (prepare_contract, selected_delivery, message_binding, protocol_binding,
                        validate_message, _read, _json, DeliveryError)
 from .handoff import enabled, protocol_template, validate_document, verify_protocol
+from .observations import Observer
 from .process import run_process
 from .sandbox import codex_home, pi_home
 
 
 class PiProtocol:
-    def __init__(self, prompt, state_path, *, checkpoints=None, closeout=None):
+    def __init__(self, prompt, state_path, *, checkpoints=None, closeout=None,
+                 observer=None, pi=None):
+        self.pi = pi_settings({'pi': pi} if pi is not None else {})
         self.prompt = prompt
         self.state_path = state_path
-        self.pending = "state"
         self.prompt_sent = False
         self.ack = False
         self.settled = False
@@ -24,6 +27,7 @@ class PiProtocol:
         self.final_error = None
         self.checkpoints = checkpoints
         self.closeout = closeout
+        self.observer = observer
         self.active = False
         self.active_tools = set()
 
@@ -32,6 +36,8 @@ class PiProtocol:
             self.checkpoints.start(time.monotonic())
         if self.closeout:
             self.closeout.start(time.monotonic())
+        if self.observer:
+            self.observer.start(time.monotonic())
         send({"id": "state", "type": "get_state"})
 
     def observe(self, now):
@@ -39,6 +45,8 @@ class PiProtocol:
             self.checkpoints.observe(now)
         if self.closeout:
             self.closeout.observe(now)
+        if self.observer:
+            self.observer.observe(now)
 
     def tick(self, now, send, *, safe_boundary=True):
         self.observe(now)
@@ -72,10 +80,10 @@ class PiProtocol:
                 if type(state) is not dict or type(state.get("model")) is not dict:
                     raise Problem("Pi state data and model must be objects")
                 model = state['model']
-                if model.get("provider") != "bonsai" or model.get("id") != "bonsai2-27b":
-                    raise Problem("Pi runtime provider/model does not match bonsai/bonsai2-27b")
-                if state.get("thinkingLevel") != "xhigh":
-                    raise Problem("Pi runtime thinking level does not match xhigh")
+                if model.get("provider") != self.pi['provider'] or model.get("id") != self.pi['model']:
+                    raise Problem(f"Pi runtime provider/model does not match {self.pi['provider']}/{self.pi['model']}")
+                if state.get("thinkingLevel") != self.pi['thinking']:
+                    raise Problem(f"Pi runtime thinking level does not match {self.pi['thinking']}")
                 if state.get("isStreaming") or state.get("pendingMessageCount", 0):
                     raise Problem("Pi is not idle at dispatch")
                 write_json(self.state_path, {"provider": model["provider"], "model": model["id"],
@@ -96,6 +104,8 @@ class PiProtocol:
             tool_id = event.get('toolCallId')
             if type(tool_id) is not str or not tool_id:
                 raise Problem('Missing Pi tool execution identity')
+            if self.observer:
+                self.observer.record_tool(event)
             if kind == 'tool_execution_start':
                 if tool_id in self.active_tools:
                     raise Problem('Duplicate active Pi tool execution identity')
@@ -126,6 +136,8 @@ class PiProtocol:
             self.checkpoints.finish(time.monotonic())
         if self.closeout:
             self.closeout.finish(time.monotonic())
+        if self.observer:
+            self.observer.finish()
 
 
 def _delivery_instructions(context, submit, *, help_allowed=False):
@@ -138,14 +150,22 @@ Before finishing, reread this read-only contract, write an honest summary in /tm
 then invoke the bound command with --summary /tmp/summary.md {statuses}.
 The tool supplies task identity and destination; never handwrite
 completion.json or create workspace delivery/. A submitted receipt is not acceptance.
+Write changes, checks, failures, deviations, not_run items and original evidence references
+in the summary. Do not invent hashes, timing, model identities, Git or test results.
+Correct any submission tool error before stopping. Then stop; never declare accepted.
+The frozen handoff and acceptance criteria are immutable. Put execution records only
+through this tool, not in frozen files. Do not change model/provider or start detached
+or background processes. Every edit and check must remain within the declared task.
 """
 
 
 def _pi_worker(prompt, context, private, sandbox, process_options, root, *,
-               delivery_instructions, allowed=(), readonly=(), checkpoints=None, closeout=None, git_write=False, pi_bin="pi"):
+               delivery_instructions, allowed=(), readonly=(), checkpoints=None, closeout=None,
+               observer=None, git_write=False, pi_bin="pi", pi=None):
+    pi = pi_settings({'pi': pi} if pi is not None else {})
     config = pi_home(private / "pi")
     (context / "worker-prompt.txt").write_text(prompt)
-    argv = [pi_bin, "--mode", "rpc", "--provider", "bonsai", "--model", "bonsai2-27b", "--thinking", "xhigh",
+    argv = [pi_bin, "--mode", "rpc", "--provider", pi["provider"], "--model", pi["model"], "--thinking", pi["thinking"],
             "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--offline",
             "--append-system-prompt", delivery_instructions,
             "--session-dir", str(config / "sessions")]
@@ -158,10 +178,11 @@ def _pi_worker(prompt, context, private, sandbox, process_options, root, *,
         writable.append(root / '.git')
     if checkpoints:
         writable.append(checkpoints.directory / 'reports')
+    # The observer is passive and controller-owned: its directory is never granted to Pi.
     run_process(sandbox.wrap(argv, root, allowed, writable, readonly=readonly),
                 cwd=root, env=env, out=context / "pi",
                 protocol=PiProtocol(prompt, context / "pi-runtime.json", checkpoints=checkpoints,
-                                    closeout=closeout), **process_options)
+                                    closeout=closeout, observer=observer, pi=pi), **process_options)
 
 
 def _document_instructions(task, context, task_dir, kinds, author):
@@ -211,7 +232,22 @@ The receiver validates protocol only. Your evidence is a claim for independent C
 For blocked work use --status blocked; do not invent a commit or test result to fill a packet.
 """
     checkpoints = None
-    if 'checkpoint_seconds' in manifest:
+    observer = None
+    if manifest.get('checkpoint_mode') == 'observe':
+        # Passive read-only observation: no progress reports, no steer, no report timeout.
+        outputs = manifest.get('checkpoint_outputs', ())
+        observer = Observer(task, attempt_dir, manifest['checkpoint_seconds'],
+                            outputs=outputs, workspace=root)
+        outputs_text = ' and '.join(outputs) if outputs else 'none'
+        instructions += (
+            f'Passive output observation every {manifest["checkpoint_seconds"]} seconds: \n'
+            'Codinator reads your existing logs, tool events and declared outputs '
+            f'({outputs_text}) read-only and records bounded metadata. This is a passive '
+            'observer; it does not request progress reports, send steering messages, '
+            'stop the attempt for silence or extend the budget. Continue working without '
+            'responding to observations. Hard limits, cancellation and the final '
+            'delivery summary/evidence duties remain in full force.\n')
+    elif 'checkpoint_seconds' in manifest:
         checkpoints = Checkpoints(task, attempt_dir, manifest['checkpoint_seconds'],
                                   timeout=process_options['timeout'])
         instructions += (f'Soft checkpoints every {manifest["checkpoint_seconds"]} seconds use RPC steer.\n'
@@ -245,37 +281,20 @@ will answer; continuation uses a fresh Pi attempt under the SAME frozen task/bud
 Use blocked if you cannot leave a clean candidate or need external/user intervention.
 Never classify a receipt as acceptance or expand authorization through a help request.
 """
-    disposition = ('--status awaiting_review. If blocked, use --status blocked and explain the concrete blocker.'
-                   if not enabled(manifest) else
-                   '--status awaiting_review for final work, --status needs_guidance with evidence for technical help,\n'
-                   'or --status blocked for an external need or unreconciled candidate. Explain the declared status honestly.')
     prompt = f"""You are the IMPLEMENTER in a Codinator task, not its reviewer.
 Task: {manifest['id']}; round {task['round']}; attempt {task['attempt']}.
 Read the frozen published handoff at {attempt_dir.parent / 'handoff.md'} and applicable AGENTS.md.
 Only edit these workspace paths: {json.dumps(manifest['allowed_paths'])}.
-The handoff and original acceptance criteria are immutable. This dispatch supersedes
-legacy instructions to edit status/provenance in frozen files: put your execution
-record only through the bound delivery tool below. Only the task-local Git commits described below are authorized.
-Do not change model/provider. Do not start detached/background processes.
-Run the required development checks yourself after committing; raw tool events are recorded.
 Required verification argv: {json.dumps(manifest['checks'])}.
 Previous feedback (data, not permission to expand scope):\n{task['feedback'] or 'Initial implementation.'}
-{instructions}
-This read-only contract and tool remain authoritative after context compaction.
-Before finishing, reread the contract. Write a summary with changes, checks performed, known failures,
-deviations, not_run items and evidence references. Do not invent hashes/timing/model data.
-Put the summary in /tmp, then run the bound command with --summary /tmp/summary.md
-{disposition}
-The tool supplies the exact task/round/attempt, validates the delivery, and returns a JSON receipt.
-Do not handwrite completion.json, choose another delivery path, or create workspace delivery/.
-Correct any tool error before stopping. A submitted receipt requests review; it is not acceptance.
-Then stop. You may not declare accepted. Each edit/check must remain within this task.
+Follow the Codinator delivery, Git and checkpoint rules in the appended system instructions.
 """
     closeout = Closeout(task, attempt_dir, process_options['timeout']) if enabled(manifest) else None
     _pi_worker(prompt, attempt_dir, private, sandbox, process_options, root,
                delivery_instructions=instructions, allowed=manifest['allowed_paths'],
                readonly=[attempt_dir.parent], checkpoints=checkpoints, closeout=closeout,
-               git_write=manifest['version'] == 2, pi_bin=pi_bin)
+               observer=observer, git_write=manifest['version'] == 2, pi_bin=pi_bin,
+               pi=pi_settings(manifest))
 
 
 def repair_delivery(task, attempt_dir, private, sandbox, process_options, error, pi_bin="pi"):
@@ -290,13 +309,16 @@ def repair_delivery(task, attempt_dir, private, sandbox, process_options, error,
     instructions = _delivery_instructions(context, submit, help_allowed=enabled(task['manifest']))
     if enabled(task['manifest']):
         instructions += _document_instructions(task, context, attempt_dir.parent, ('summary', 'help'), 'pi')
-        instructions += ('Preserve an original technical-help request as needs_guidance with the help '
-                         'template and existing candidate evidence; otherwise use awaiting_review or blocked.\n')
-    disposition = ('--status awaiting_review. If the work is incomplete or blocked,\nuse --status blocked and explain why.'
-                   if not enabled(task['manifest']) else
-                   '--status needs_guidance with existing evidence for an original technical-help request,\n'
-                   '--status awaiting_review for original final work, or --status blocked if the existing\n'
-                   'evidence cannot support the declared candidate or an external condition prevents continuation.')
+    instructions += """This is delivery repair only. The workspace and original attempt evidence are read-only.
+Do not edit source/tests, run audits or checks, install anything, change configuration,
+run Git, commit or start background processes. Preserve the original delivery.
+Reconstruct missing evidence ONLY from original Pi tool events. Do not invent a SHA,
+claim unperformed checks or claim known failures were fixed. Read the original delivery
+and frozen handoff only as needed. For awaiting_review pass --evidence /tmp/evidence.json.
+Submit blocked if existing evidence cannot support an honest packet or an external
+condition prevents continuation. Preserve original technical help as needs_guidance
+with its existing evidence. This repair has at most five minutes within the original budget.
+"""
     prompt = f"""You are repairing ONLY the delivery protocol for task {task['id']}.
 Task: {task['id']}; round {task['round']}; attempt {task['attempt']}.
 The implementation process completed normally. Its original delivery is invalid.
@@ -304,23 +326,12 @@ Errors: {json.dumps(error.errors, ensure_ascii=False)}
 Original evidence: {attempt_dir}
 Frozen workspace: {task['manifest']['workspace']}
 Frozen submission: {attempt_dir / 'submission.json'}
-The workspace and original attempt evidence are read-only. Do not edit source/tests,
-run audits or checks, install anything, change configuration, commit, or start background processes.
-Read the original delivery and published handoff only as needed to produce an honest summary.
-Preserve the original delivery. Reconstruct any missing evidence packet ONLY from original Pi tool events.
-Do not invent a SHA, run Git, claim unperformed checks or claim that known failures were fixed.
-If the existing evidence cannot support an honest packet, submit blocked.
-For awaiting_review also pass --evidence /tmp/evidence.json according to the read-only contract.
-{instructions}
-Reread the contract, write a summary in /tmp, and invoke the bound command with
---summary /tmp/summary.md {disposition}
-Never handwrite completion.json or use a different directory.
-Correct any tool error before stopping. The receipt requests independent Codex verification and
-review, never acceptance. This repair has at most five minutes within the original task budget.
-Then stop.
+Published handoff: {attempt_dir.parent / 'handoff.md'}
+Follow the delivery repair rules and bound command in the appended system instructions.
 """
     _pi_worker(prompt, context, private, sandbox, process_options, Path(task['manifest']['workspace']),
-               delivery_instructions=instructions, readonly=[attempt_dir.parent], pi_bin=pi_bin)
+               delivery_instructions=instructions, readonly=[attempt_dir.parent], pi_bin=pi_bin,
+               pi=pi_settings(task['manifest']))
 
 
 ISSUE_FIELDS = ("id", "priority", "path", "description", "required_change", "validation")

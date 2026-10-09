@@ -1,10 +1,12 @@
 # Codinator
 
-Codinator 为主 Codex、Pi + Bonsai 和独立 Codex 提供任务交接协议与后台通信渠道。
+Codinator 为主 Codex、Pi 和独立 Codex 提供任务交接协议与后台通信渠道。
 主 Codex 负责需求、拆解、handoff 和纠偏；Pi 负责实施、Git 提交与测试；独立 Codex 负责验证和验收。
 **Codinator 不实施业务任务，不运行项目测试，不调用 Git。** 它派发模型进程，传递原始要求和反馈，保存交接证据，控制状态、预算和串行执行。
 
 本轮实现依据 [交接协议与任务推进改造计划](docs/handoff-review-refactor-plan.md)。新 v2 任务可显式启用 `handoff_protocol: 1`；旧契约保留原行为。格式通过不表示内容合格，文档内容由作者及接收的 Codex／Pi 负责核验。
+
+其他项目接入时可参考[项目 AGENTS.md 调度约定](docs/project-agents.md)。该文档从 AlphaLab 提取可复制的通用约束，并区分项目授权、旧契约与当前控制器能力。
 
 ## 环境与安装
 
@@ -22,9 +24,20 @@ systemctl --user enable --now codinator.service
 
 `doctor` 只验证依赖和沙箱，不调用模型。`service` 只输出 unit，不代为安装或重启。
 已有服务仅在确认旧任务停止后升级；不得在活动实施期间换版本。
-生成 unit 时保留 PATH 和代理环境；Pi 子进程去掉代理并直连 Bonsai，Codex 审查与通知保留代理。
-实施固定为 `bonsai / bonsai2-27b / xhigh`，独立验收为 `gpt-6-astra / xhigh`，不静默更换模型。
-Pi 的客户端身份由 RPC 核验，不能证明远端服务实际加载的权重。
+生成 unit 时保留 PATH 和代理环境；Pi 子进程去掉代理，按 Pi 配置连接任务指定的提供方，Codex 审查与通知保留代理。
+原生实施仍通过 Pi。任务 manifest 可指定模型身份：
+
+```json
+"pi": {"provider": "strata", "model": "qwen3.8-flash-next-iq3_s", "thinking": "high"}
+```
+
+出现 `pi` 时三个字段均必填。发布前在 Pi 中配置准确的 provider 和模型 ID；地址和认证仍由 Pi 管理。
+`thinking` 支持 `off`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`。
+省略此字段仍使用 `bonsai / bonsai2-27b / xhigh`，不向旧冻结 manifest 补写默认值。
+外部实施任务不接受此字段。模型身份随契约冻结，在发送任务前核验，交付修复和仅重试验收沿用同一身份。
+更换模型须发布新契约并沿用实际剩余额度，不能重置预算。指导与独立验收仍用 `gpt-6-astra / xhigh`。
+当前配置的 strata 模型在 Pi 中报告 `high`；请求 `xhigh` 后若被 Pi 降级，控制器会明确拒绝。
+参考 [strata manifest 示例](examples/strata-task.json)。运行身份是 Pi 的客户端报告，不证明服务端权重或模型质量。
 
 指导与审查要求 Codex 支持命名权限配置：继承 `:read-only`，仅授予 `/tmp` 写入以支持
 fixture 和日志；外层 bubblewrap 保持源码、Git 与原始证据只读，不使用无沙箱回退。
@@ -176,3 +189,29 @@ PYTHONPATH=src python3 -B -m unittest discover -s tests -v
 即使原交付已存在也不覆盖。执行命令与完整约束见英文 README 的 S03 harness improvements。
 
 本次合成/fake-agent验证不能宣称真实模型连通或 S04 已完成；旧 S03 证据及状态保留原样。
+
+## 只读观察软检查（新 Pi 任务推荐）
+
+新 v2 Pi 任务使用 `handoff_protocol: 1`、`checkpoint_mode: "observe"` 和
+`checkpoint_seconds: 1800`。示例见 [observation-task.json](examples/observation-task.json)。
+单进程硬限仍设 `attempt_seconds: 5400`。同阶段共享原预算。
+省略新模式时保留已发布的报告行为。observe 不支持 external 宿主实施，
+也不能与 `checkpoint_format`、`first_checkpoint`、`counterexamples` 同用。
+
+`checkpoint_outputs` 可省略或为空，最多声明 16 个不同的项目相对文件路径。
+可声明 handoff 约定的日志和进度文件，不接受目录、通配符、点路径、保护路径和符号链接。
+控制器不搜索文件、不运行项目命令、不生成项目进度。handoff 说明输出和所需行为证据。
+
+控制器在启动及每个周期保存不可覆盖、绑定 task/round/attempt 的记录。
+记录 UTC、elapsed、来源范围、大小增量、工具开始/结束计数及有界活动工具 ID。
+活动工具期间也采集。RPC 日志只引用元数据，不分析或复制模型对话。
+声明文件每项最多采样 32 KiB，每次片段单独保存。哈希只绑定采样字节，不绑定整文件。
+启动基线区分旧产物。缺失、不可读、非文本、部分 JSON、并发写入、替换和截断明确记录未知。
+
+Pi 无需定时报告。观察器不发送 checkpoint steer，也没有五分钟报告超时。
+静默或缺少产物不会自动停工。硬限、取消、最终 summary/evidence 和非作者独立验收保持。
+控制器证据写入失败必须明确失败。status 显示观察数、最近记录和证据路径；
+证据损坏或绑定错误明确报错。观察记录不证明进度、测试通过或 accepted。
+主 Codex 按实际行为证据判断纠偏，需要时使用原生 pause。
+核验工具已停并保存 Git 现场后，在剩余预算内发布新的指导 handoff。
+观察器不启动指导模型，不追溯迁移旧任务。

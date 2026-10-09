@@ -6,7 +6,26 @@ import re
 from .files import Problem, under
 from .handoff import validate_document
 
-DEFAULT_EXCLUDES = [".venv/", ".pytest_cache/"]
+
+def pi_settings(manifest):
+    """Resolve the frozen native Pi identity without rewriting legacy manifests."""
+    if 'pi' not in manifest:
+        return {'provider': 'bonsai', 'model': 'bonsai2-27b', 'thinking': 'xhigh'}
+    spec = manifest['pi']
+    if manifest.get('implementation') == 'external':
+        raise Problem('pi settings require native Pi implementation')
+    if type(spec) is not dict or set(spec) != {'provider', 'model', 'thinking'}:
+        raise Problem('pi requires exactly provider, model and thinking')
+    for key in ('provider', 'model'):
+        value = spec[key]
+        if (type(value) is not str or not value or value.startswith('-')
+                or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in value)):
+            raise Problem(f'pi.{key} must be a nonempty identity without whitespace or control characters')
+    if ':' in spec['model']:
+        raise Problem('pi.model must be a model ID without a thinking shorthand')
+    if spec['thinking'] not in ('off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'):
+        raise Problem('pi.thinking must be off, minimal, low, medium, high, xhigh or max')
+    return dict(spec)
 
 
 def positive(value, name):
@@ -41,13 +60,15 @@ def load_manifest(path):
     allowed_keys = {"version", "id", "workspace", "handoff", "allowed_paths", "checks", "excludes",
                     "max_rounds", "max_seconds", "attempt_seconds", "checkpoint_seconds", "deadline_utc",
                     "notify_thread", "integration", "git", "handoff_protocol",
-                    "checkpoint_format", "first_checkpoint", "counterexamples", "stage", "implementation"}
+                    "checkpoint_format", "first_checkpoint", "counterexamples", "checkpoint_mode",
+                    "checkpoint_outputs", "stage", "implementation", "pi"}
     if type(raw) is not dict or set(raw) - allowed_keys:
         raise Problem("Unknown manifest field(s)")
-    if raw.get("version") not in (1, 2) or type(raw.get("version")) is not int:
-        raise Problem("Manifest version must be 1 (published legacy tasks) or 2 (Git checkpoints)")
+    if type(raw.get("version")) is not int or raw["version"] != 2:
+        raise Problem("New publication requires manifest version 2; version 1 tasks are read-only history")
+    pi_settings(raw)
     if 'handoff_protocol' in raw:
-        if raw['version'] != 2 or type(raw['handoff_protocol']) is not int or raw['handoff_protocol'] != 1:
+        if type(raw['handoff_protocol']) is not int or raw['handoff_protocol'] != 1:
             raise Problem('handoff_protocol requires version 2 and integer protocol version 1')
     if 'checkpoint_format' in raw:
         if raw['checkpoint_format'] != 'compact' or raw.get('handoff_protocol') != 1:
@@ -61,6 +82,21 @@ def load_manifest(path):
             raise Problem('compact checkpoints require nonempty counterexamples')
     elif 'first_checkpoint' in raw or 'counterexamples' in raw:
         raise Problem('first_checkpoint/counterexamples require compact checkpoints')
+    if 'checkpoint_mode' in raw:
+        mode = raw['checkpoint_mode']
+        if type(mode) is not str or mode != 'observe':
+            raise Problem(f"Unknown checkpoint_mode {mode!r}; only 'observe' is supported")
+        if raw.get('handoff_protocol') != 1:
+            raise Problem("checkpoint_mode 'observe' requires handoff_protocol 1")
+        if 'checkpoint_seconds' not in raw:
+            raise Problem("checkpoint_mode 'observe' requires checkpoint_seconds")
+        if ('checkpoint_format' in raw or 'first_checkpoint' in raw or 'counterexamples' in raw):
+            raise Problem("checkpoint_mode 'observe' is mutually exclusive with checkpoint_format, "
+                          "first_checkpoint and counterexamples")
+        if raw.get('implementation') == 'external':
+            raise Problem("checkpoint_mode 'observe' does not support implementation='external'")
+    if 'checkpoint_outputs' in raw and raw.get('checkpoint_mode') != 'observe':
+        raise Problem("checkpoint_outputs is only valid with checkpoint_mode 'observe'")
     if 'implementation' in raw and (raw['implementation'] != 'external' or raw.get('handoff_protocol') != 1):
         raise Problem('external implementation requires handoff_protocol 1')
     if 'stage' in raw:
@@ -68,18 +104,15 @@ def load_manifest(path):
         validate_stage(raw['stage'])
         if raw.get('handoff_protocol') != 1:
             raise Problem('shared stages require handoff_protocol 1')
-    if raw['version'] == 2:
-        spec = raw.get('git')
-        if type(spec) is not dict or set(spec) != {'branch', 'base_commit'}:
-            raise Problem('Version 2 requires git.branch and git.base_commit')
-        if not isinstance(spec['branch'], str) or not spec['branch'] or spec['branch'].startswith('-'):
-            raise Problem('git.branch must be a branch name')
-        if not isinstance(spec['base_commit'], str) or not re.fullmatch(r'(?:[0-9a-f]{40}|[0-9a-f]{64})', spec['base_commit']):
-            raise Problem('git.base_commit must be an exact commit SHA')
-        if 'excludes' in raw or 'integration' in raw:
-            raise Problem('Version 2 uses fixed Git ignore rules and task-local commits; excludes/integration are legacy-only')
-    elif 'git' in raw:
-        raise Problem('Git checkpoints require manifest version 2')
+    spec = raw.get('git')
+    if type(spec) is not dict or set(spec) != {'branch', 'base_commit'}:
+        raise Problem('Version 2 requires git.branch and git.base_commit')
+    if not isinstance(spec['branch'], str) or not spec['branch'] or spec['branch'].startswith('-'):
+        raise Problem('git.branch must be a branch name')
+    if not isinstance(spec['base_commit'], str) or not re.fullmatch(r'(?:[0-9a-f]{40}|[0-9a-f]{64})', spec['base_commit']):
+        raise Problem('git.base_commit must be an exact commit SHA')
+    if 'excludes' in raw or 'integration' in raw:
+        raise Problem('Version 2 uses fixed Git ignore rules and task-local commits; excludes/integration are legacy-only')
     if not isinstance(raw.get("id"), str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", raw["id"]):
         raise Problem("Invalid task id")
     root = Path(raw["workspace"]).expanduser().resolve(strict=True)
@@ -104,15 +137,21 @@ def load_manifest(path):
             raise Problem(f"Writable path may not traverse a symlink: {p}")
         if target.is_dir() and not p.endswith("/"):
             raise Problem(f"Directory allowlists need trailing '/': {p}")
-    raw.setdefault("excludes", DEFAULT_EXCLUDES.copy() if raw['version'] == 1 else [])
-    if not isinstance(raw["excludes"], list):
-        raise Problem("excludes must be an array")
-    raw["excludes"] = [relative(p) for p in raw["excludes"]]
-    if under(raw["handoff"], raw["excludes"]):
-        raise Problem("Cannot exclude the handoff")
-    for p in raw["allowed_paths"]:
-        if under(p.rstrip("/"), raw["excludes"]) or any(under(e.rstrip('/'), [p]) for e in raw['excludes']):
-            raise Problem("Allowed paths cannot be excluded from snapshots")
+    if raw.get('checkpoint_mode') == 'observe':
+        outputs = raw.get('checkpoint_outputs', [])
+        if type(outputs) is not list:
+            raise Problem("checkpoint_outputs must be an array of distinct relative file paths")
+        if len(outputs) > 16:
+            raise Problem("checkpoint_outputs must contain at most 16 distinct file paths")
+        seen = set()
+        for p in outputs:
+            if type(p) is not str or not p or "\0" in p or p.endswith("/") or "//" in p:
+                raise Problem("checkpoint_outputs entries must be nonempty relative file paths")
+            if relative(p) in seen:
+                raise Problem(f"Duplicate checkpoint_outputs path: {p}")
+            seen.add(p)
+            if (root / p).is_dir():
+                raise Problem(f"checkpoint_outputs path must be a file, not a directory: {p}")
     names = set()
     for check in raw["checks"]:
         if type(check) is not dict or set(check) - {"name", "argv", "timeout_seconds"}:
@@ -134,24 +173,4 @@ def load_manifest(path):
         deadline_timestamp(raw['deadline_utc'])
     if raw.get("notify_thread") is not None and (not isinstance(raw["notify_thread"], str) or not raw["notify_thread"].strip()):
         raise Problem("notify_thread must be a nonempty string")
-    if "integration" in raw:
-        spec = raw["integration"]
-        if type(spec) is not dict or set(spec) != {"target_workspace", "target_branch", "base_commit", "planning_paths"}:
-            raise Problem("integration requires target_workspace, target_branch, base_commit and planning_paths")
-        target = Path(spec["target_workspace"]).expanduser().resolve(strict=True)
-        if not target.is_dir() or target == root or target.is_relative_to(root) or root.is_relative_to(target):
-            raise Problem("Integration target must be a separate checkout")
-        if not isinstance(spec["target_branch"], str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_/-]*", spec["target_branch"]):
-            raise Problem("Invalid integration target branch")
-        if not isinstance(spec["base_commit"], str) or not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", spec["base_commit"]):
-            raise Problem("Integration requires an exact base commit")
-        if not isinstance(spec["planning_paths"], list):
-            raise Problem("integration planning_paths must be an array")
-        spec["planning_paths"] = [relative(p) for p in spec["planning_paths"]]
-        if any(under(p.rstrip("/"), spec["planning_paths"]) or
-               any(under(q.rstrip("/"), [p]) for q in spec["planning_paths"]) for p in raw["allowed_paths"]):
-            raise Problem("Integration planning paths may not overlap implementation paths")
-        spec["target_workspace"] = str(target)
-    if raw['version'] == 2:
-        del raw['excludes']
     return raw

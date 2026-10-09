@@ -194,7 +194,7 @@ class ConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='checkpoint-config-', dir='/tmp') as tmp:
             root = Path(tmp)
             (root / 'handoff.md').write_text('Fixed contract')
-            value = {'version': 1, 'id': 'T', 'workspace': tmp, 'handoff': 'handoff.md',
+            value = {'version': 2, 'git': {'branch': 'task', 'base_commit': 'a' * 40}, 'id': 'T', 'workspace': tmp, 'handoff': 'handoff.md',
                      'allowed_paths': ['product.py'], 'checks': [{'name': 'unit', 'argv': ['true']}],
                      'attempt_seconds': 5400}
             path = root / 'manifest.json'

@@ -5,6 +5,7 @@ from .checkpoints import status as checkpoint_status
 from .files import Problem, file_info
 from .delivery import selected_delivery, validate_delivery, _read, _json
 from .handoff import enabled, verify_protocol
+from .observations import status as observation_status
 from .process import process_start
 from .stages import stage_status
 
@@ -90,6 +91,14 @@ def report(store, task):
             if progress is not None:
                 result['latest_checkpoint'] = progress
                 result['summaries']['latest_stage'] = progress.get('latest_stage_summary')
+                break
+    if task['manifest'].get('checkpoint_mode') == 'observe':
+        result['checkpoint_mode'] = 'observe'
+        result['observation'] = None
+        for number in range(task['attempt'], 0, -1):
+            obs = observation_status(directory / f'attempt-{number:04d}', task['id'], number)
+            if obs is not None:
+                result['observation'] = obs
                 break
     if task.get('integration'):
         result['integration'] = task['integration']

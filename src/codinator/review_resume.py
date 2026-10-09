@@ -1,9 +1,9 @@
 """Read-only validation of the original implementation evidence for review retries."""
 import json
-from pathlib import Path
 
 from .files import Problem, file_info
-from .delivery import selected_delivery, validate_delivery, read_submission
+from .config import pi_settings
+from .delivery import selected_delivery, read_delivery
 from .handoff import enabled, verify_protocol
 
 
@@ -16,7 +16,7 @@ def require_unfinished_review(attempt):
             raise Problem('Existing verdict/outcome requires inspection; review-only resume refused')
 
 
-def checkpoint(store, task, sandbox, *, accepted=False):
+def checkpoint(store, task):
     """Pin original handoff evidence; the reviewer must independently recheck Git/tests."""
     if task['manifest']['version'] != 2:
         raise Problem('Version 1 tasks are read-only history')
@@ -68,15 +68,14 @@ def checkpoint(store, task, sandbox, *, accepted=False):
     external = task['manifest'].get('implementation') == 'external'
     if not entered_review and not (external and (external_delivered or task['state'] == 'external_implementing')):
         raise Problem('No controller checkpoint proving this attempt reached review')
-    if not accepted:
-        require_unfinished_review(source)
+    require_unfinished_review(source)
     before, submitted = document('before.json'), document('submission.json')
     manifest = task['manifest']
     for name in ('delivery-selection.json', 'delivery-contract.json', 'submit-delivery.py'):
         evidence(name)
     delivery = selected_delivery(source)
     submission_task = task | {'attempt': number, 'expected_digest': before.get('commit')}
-    packet = read_submission(delivery, submission_task)
+    status, packet = read_delivery(delivery, submission_task)
     if packet is None:
         raise Problem('Review requires a complete agent submission packet')
     fingerprint = packet['git']['commit']
@@ -86,10 +85,12 @@ def checkpoint(store, task, sandbox, *, accepted=False):
     if before != expected | {'commit': packet['git']['base_commit']}:
         raise Problem('Review submission base does not match the original handoff')
 
+    pi = pi_settings(manifest)
+
     def successful_pi(prefix=''):
         successful_process(prefix + 'pi', ('stdout.jsonl', 'stderr.txt'))
         identity = document(prefix + 'pi-runtime.json')
-        if (identity.get('provider'), identity.get('model'), identity.get('thinking')) != ('bonsai', 'bonsai2-27b', 'xhigh'):
+        if (identity.get('provider'), identity.get('model'), identity.get('thinking')) != (pi['provider'], pi['model'], pi['thinking']):
             raise Problem('Unexpected Pi runtime identity in review evidence')
         ack, settled, stop = False, False, None
         with (source / (prefix + 'pi/stdout.jsonl')).open() as stream:
@@ -137,7 +138,7 @@ def checkpoint(store, task, sandbox, *, accepted=False):
             evidence('delivery-repair/' + name)
     prefix = delivery.relative_to(source).as_posix() + '/'
     document(prefix + 'completion.json')
-    if validate_delivery(delivery, task['id'], task['round'], number) != 'awaiting_review':
+    if status != 'awaiting_review':
         raise Problem('Pi completion identity/status does not match the review source')
     evidence(prefix + 'summary.md')
     evidence(prefix + 'evidence.json')

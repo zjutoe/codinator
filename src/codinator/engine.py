@@ -6,7 +6,7 @@ import time
 
 from .agents import guidance, repair_delivery, reviewer, verify_reply, worker
 from .config import deadline_timestamp, positive
-from .delivery import DeliveryError, read_submission, select_delivery, selected_delivery, validate_delivery
+from .delivery import DeliveryError, read_delivery, select_delivery, selected_delivery
 from .files import Problem, digest, write_json
 from .handoff import enabled, freeze_protocol, verify_protocol
 from .process import Interrupted, process_start, stop_group
@@ -150,7 +150,7 @@ class Engine:
                     if task['review_resume'] is None:
                         raise Problem('Missing persisted review checkpoint')
                     require_unfinished_review(self.attempt_path(task))
-                    pinned, evidence_dir = checkpoint(self.store, task, self.sandbox)
+                    pinned, evidence_dir = checkpoint(self.store, task)
                 with self.store.db:
                     self.store.db.execute('BEGIN IMMEDIATE')
                     current = self.store.get(task_id)
@@ -183,8 +183,7 @@ class Engine:
                         raise Problem('Previous process exit is unconfirmed; delivery refused')
                     delivery = attempt / 'delivery'
                     try:
-                        pi_status = validate_delivery(delivery, task_id, task['round'], task['attempt'])
-                        submission = read_submission(delivery, task)
+                        pi_status, submission = read_delivery(delivery, task)
                     except DeliveryError as exc:
                         write_json(attempt / 'delivery-error.json', {'errors': exc.errors, 'repairable': exc.repairable})
                         if not exc.repairable:
@@ -196,8 +195,7 @@ class Engine:
                         repair_delivery(task, attempt, private, self.sandbox,
                                         self.options(task_id, timeout), exc, self.pi_bin)
                         delivery = attempt / 'delivery-repair/delivery'
-                        pi_status = validate_delivery(delivery, task_id, task['round'], task['attempt'])
-                        submission = read_submission(delivery, task)
+                        pi_status, submission = read_delivery(delivery, task)
                     if pi_status == 'blocked':
                         raise Problem(f'Pi reported blocked; read {delivery / "summary.md"}')
                     select_delivery(attempt, delivery)
@@ -244,7 +242,7 @@ class Engine:
                     if verify_reply(attempt, 'review') != verdict:
                         raise Problem('Verdict differs from the selected reply artifact')
                 if review_only:
-                    checkpoint(self.store, self.store.get(task_id), self.sandbox)
+                    checkpoint(self.store, self.store.get(task_id))
                 feedback = json.dumps(verdict, ensure_ascii=False, indent=2)
                 with self.store.db:
                     self.store.db.execute('BEGIN IMMEDIATE')
@@ -261,7 +259,7 @@ class Engine:
                     if task['round'] >= m['max_rounds']:
                         raise Problem('Automatic rework round budget exhausted; ' + feedback)
                     self.store.update(task_id, state='external_ready' if m.get('implementation') == 'external' else 'needs_changes', round=task['round'] + 1, phase='queued',
-                                      feedback=feedback, last_issues=json.dumps(sorted(i['id'] for i in verdict['issues'])),
+                                      feedback=feedback,
                                       review_resume=None)
                     if m.get('implementation') == 'external':
                         return
@@ -296,7 +294,7 @@ class Engine:
                 pinned = None
                 if review_only:
                     require_unfinished_review(self.attempt_path(task))
-                    pinned, _ = checkpoint(self.store, task, self.sandbox)
+                    pinned, _ = checkpoint(self.store, task)
                 deadline = task['deadline']
                 if extra_seconds:
                     deadline = max(time.time(), deadline or time.time()) + extra_seconds

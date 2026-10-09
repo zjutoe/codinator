@@ -7,9 +7,8 @@ import re
 import shlex
 import stat
 import sys
-import tempfile
 
-from .files import Problem, file_info
+from .files import Problem, file_info, write_bytes
 from .handoff import DocumentError, enabled, validate_document, verify_protocol
 
 
@@ -195,10 +194,11 @@ def _summary(data, path, kind=None):
             raise DeliveryError(exc.errors, repairable=True) from exc
 
 
-def validate_delivery(directory, task_id, round_number, attempt_number):
+def _validated_delivery(directory, task_id, round_number, attempt_number, binding=None):
     directory = Path(directory)
     contract_path = directory.parent / 'delivery-contract.json'
-    contract = _contract(contract_path) if _optional(contract_path) is not None else None
+    contract_data = _optional(contract_path)
+    contract = _contract(contract_path, data=contract_data) if contract_data is not None else None
     protocol = bool(contract and 'handoff' in contract)
     statuses = HANDOFF_STATUSES if protocol else STATUSES
     if protocol:
@@ -206,10 +206,11 @@ def validate_delivery(directory, task_id, round_number, attempt_number):
         if any(type(contract[k]) is not type(v) or contract[k] != v for k, v in identity.items()):
             raise _error('binding_mismatch', contract_path, identity, {k: contract[k] for k in identity})
     errors, repairable, status = [], True, None
+    contents = {}
     for name in NAMES:
         path = directory / name
         try:
-            data = _read(path)
+            data = contents[name] = _read(path)
             if name == 'summary.md':
                 _summary(data, path)
             else:
@@ -227,17 +228,20 @@ def validate_delivery(directory, task_id, round_number, attempt_number):
         repairable = False
     if errors:
         raise DeliveryError(errors, repairable=repairable)
+    packet = _submission_evidence(directory, contract if protocol else binding, status) if protocol or binding else None
     if protocol:
-        packet = _submission_evidence(directory, contract, status)
-        _summary(_read(directory / 'summary.md'), directory / 'summary.md',
+        _summary(contents['summary.md'], directory / 'summary.md',
                  'help' if status == 'needs_guidance' else 'summary')
-        completion, duplicates, _ = _json(_read(directory / 'completion.json'), directory / 'completion.json')
-        if duplicates:
-            raise DeliveryError(duplicates, repairable=False)
+        completion = value
         expected = message_binding(contract, 'help' if status == 'needs_guidance' else 'summary',
                                    packet['git']['commit'] if packet else None)
         validate_message(completion['message'], expected, str(directory / 'completion.json') + '.message')
-    return status
+    return status, contract, packet
+
+
+def validate_delivery(directory, task_id, round_number, attempt_number):
+    """Validate a completion's identity and protocol; return its declared status."""
+    return _validated_delivery(directory, task_id, round_number, attempt_number)[0]
 
 
 def _sha(value):
@@ -377,42 +381,32 @@ def _submission_evidence(directory, contract, status):
         raise
 
 
-def read_submission(directory, task):
+def read_delivery(directory, task):
     """Read bound agent claims. A valid claim is not independent acceptance."""
     identity = {'task_id': task['id'], 'round': task['round'], 'attempt': task['attempt']}
-    status = validate_delivery(directory, *identity.values())
+    binding = identity | _agent_binding(task) if task.get('manifest', {}).get('version') == 2 else None
+    status, contract, packet = _validated_delivery(directory, *identity.values(), binding=binding)
     if task.get('manifest', {}).get('version') != 2:
-        return None
+        return status, None
     if enabled(task['manifest']):
-        contract = _contract(Path(directory).parent / 'delivery-contract.json')
-        if 'handoff' not in contract:
+        if not contract or 'handoff' not in contract:
             raise _error('invalid_contract', directory, 'original handoff protocol binding', 'missing')
-        expected = identity | _agent_binding(task)
+        expected = binding
         if any(type(contract.get(k)) is not type(v) or contract[k] != v for k, v in expected.items()):
             raise _error('binding_mismatch', directory, expected, contract)
         if contract['handoff'] != protocol_binding(task, contract['handoff']['directory']):
             raise _error('binding_mismatch', directory, 'original contract and preceding reply', contract['handoff'])
-    return _submission_evidence(directory, identity | _agent_binding(task), status)
+    return status, packet
+
+
+def read_submission(directory, task):
+    """Read validated agent claims without certifying their truth."""
+    return read_delivery(directory, task)[1]
 
 
 def _write_once(path, data):
-    """Publish a complete file without ever replacing an earlier artifact."""
     _directory(path.parent)
-    fd, temporary = tempfile.mkstemp(prefix='.delivery-pending-', dir=path.parent)
-    temporary = Path(temporary)
-    try:
-        with os.fdopen(fd, 'wb') as stream:
-            stream.write(data)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.link(temporary, path)
-        directory_fd = os.open(path.parent, os.O_DIRECTORY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
-    finally:
-        temporary.unlink()
+    write_bytes(path, data)
 
 
 def _encode(value):
@@ -447,8 +441,8 @@ def prepare_contract(task, context_dir, delivery_dir, *, task_dir=None):
     return shlex.join([sys.executable, '-I', '-B', str(launcher)])
 
 
-def _contract(path):
-    value, errors, _ = _json(_read(path), path)
+def _contract(path, *, data=None):
+    value, errors, _ = _json(_read(path) if data is None else data, path)
     keys = {'version', 'task_id', 'round', 'attempt', 'delivery_dir'}
     if type(value) is dict and 'protocol' in value:
         keys |= {'protocol', 'git', 'checks'}

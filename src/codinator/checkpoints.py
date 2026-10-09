@@ -8,7 +8,7 @@ import shlex
 import sys
 import time
 
-from .delivery import _directory, _encode, _json, _read, _write_once, validate_delivery, read_submission
+from .delivery import _directory, _encode, _json, _read, _write_once, read_delivery
 from .files import Problem, file_info
 from .handoff import enabled, validate_document
 
@@ -165,13 +165,13 @@ def main(argv=None, *, contract_path):
         _request(directory, identity, args.request)
         protocol = enabled(contract)
         compact = contract.get('checkpoint_format') == 'compact'
-        progress = _progress(_document(args.report), protocol, contract.get('checkpoint_format') == 'compact')
+        progress = _progress(_document(args.report), protocol, compact)
         report = identity | {'checkpoint': args.request, 'progress': progress}
         target = directory / 'reports' / f'{args.request:04d}.json'
         try:
             _write_once(target, _encode(report))
         except FileExistsError:
-            if _report(directory, identity, args.request, protocol) != report:
+            if _report(directory, identity, args.request, protocol, compact) != report:
                 raise Problem('Conflicting checkpoint report; original evidence preserved')
         print(json.dumps({'status': 'progress_recorded', **identity, 'checkpoint': args.request}))
         return 0
@@ -383,11 +383,9 @@ replay uncertain work or extend scope/budget.'''
             return
         try:
             delivery = self.context / 'delivery'
-            disposition = validate_delivery(delivery, self.identity['task_id'],
-                                            self.identity['round'], self.identity['attempt'])
+            disposition, packet = read_delivery(delivery, self.task)
             if disposition != 'needs_guidance':
                 return
-            packet = read_submission(delivery, self.task)
             if packet is None:
                 return
             names = ['summary.md', 'completion.json', 'evidence.json']
@@ -433,13 +431,10 @@ replay uncertain work or extend scope/budget.'''
         else:
             delivery = self.context / 'delivery'
             try:
-                disposition = validate_delivery(delivery, self.identity['task_id'],
-                                                self.identity['round'], self.identity['attempt'])
+                disposition, packet = read_delivery(delivery, self.task)
                 names = ['summary.md', 'completion.json']
-                if self.task.get('manifest', {}).get('version') == 2:
-                    packet = read_submission(delivery, self.task)
-                    if packet is not None:
-                        names.append('evidence.json')
+                if packet is not None:
+                    names.append('evidence.json')
             except (Problem, OSError, ValueError) as exc:
                 self._violate(self.number, 'missing_final_delivery', now, str(exc))
             else:

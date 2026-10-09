@@ -2,12 +2,10 @@
 import hashlib
 from importlib import resources
 import json
-import os
 from pathlib import Path
 import re
-import tempfile
 
-from .files import Problem, digest, write_json
+from .files import Problem, digest, write_bytes, write_json
 
 
 SECTIONS = {
@@ -108,24 +106,10 @@ def _read(path):
 
 
 def _write_once(path, data):
-    """Publish complete bytes atomically without replacing earlier evidence."""
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.parent.is_symlink():
         raise Problem(f'Symlink frozen template directory: {path.parent}')
-    fd, name = tempfile.mkstemp(prefix='.' + path.name + '.', dir=path.parent)
-    try:
-        with os.fdopen(fd, 'wb') as stream:
-            stream.write(data)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.link(name, path)
-        directory = os.open(path.parent, os.O_DIRECTORY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
-    finally:
-        os.unlink(name)
+    write_bytes(path, data)
 
 
 def _record(task_dir):

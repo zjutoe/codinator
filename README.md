@@ -3,7 +3,7 @@
 [中文文档](README_CN.md)
 
 Codinator provides the handoff protocol and background transport between main Codex,
-Pi + Bonsai, and independent Codex review. Main Codex owns requirements, planning,
+Pi, and independent Codex review. Main Codex owns requirements, planning,
 handoffs and corrective guidance. Pi implements, runs project commands/tests and makes
 local Git commits. Independent Codex verifies the work and decides acceptance.
 
@@ -17,6 +17,8 @@ The controller does not create a separate source snapshot store. Document struct
 control fields and evidence integrity are controller responsibilities; whether the
 content is true, useful or satisfies the task is the responsibility of its authors
 and receiving agents.
+
+Projects adopting Codinator can use the [project AGENTS.md guide](docs/project-agents.md) (Chinese), extracted from AlphaLab. It includes copyable scheduling agreements and distinguishes project authorization from relay capabilities.
 
 ## Setup
 
@@ -37,9 +39,24 @@ systemctl --user enable --now codinator.service
 `service` prints a unit; it does not install or restart it. Upgrade only after old
 agent processes have stopped. Generated units preserve PATH and proxy settings.
 Pi removes proxy variables and connects directly; Codex review/notifications retain them.
-Implementation is fixed to `bonsai / bonsai2-27b / xhigh`; guidance and independent
-review use `gpt-6-astra / xhigh`. These choices are currently fixed in the implementation.
-Pi RPC attests client configuration, not the weights loaded by the remote server.
+Native implementation uses Pi. Select its identity with the optional manifest field:
+
+```json
+"pi": {"provider": "strata", "model": "qwen3.8-flash-next-iq3_s", "thinking": "high"}
+```
+
+All three keys are required when `pi` is present. Configure the exact provider and model ID
+in Pi before publication; the endpoint and credentials remain in Pi's configuration.
+`thinking` accepts `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`.
+An omitted field keeps `bonsai / bonsai2-27b / xhigh`, including frozen legacy tasks;
+no defaults are inserted into their manifests. The field is not valid for external implementation.
+The selected identity is frozen with the task and checked before sending a prompt.
+Delivery repair and review-only retries use the same identity. Changing models requires
+a new task contract with the actual remaining allowance, not a budget reset.
+Guidance and independent review remain `gpt-6-astra / xhigh`; there is no silent model switch.
+The configured strata model reports `high`; requesting `xhigh` is rejected if Pi lowers it.
+See [the strata manifest example](examples/strata-task.json). Runtime identity is Pi's
+client report, not proof of server weights or model quality.
 
 Guidance and review require Codex named permission profiles. Their profile extends
 `:read-only` and grants only `/tmp` writes for fixtures and logs; the outer bubblewrap
@@ -141,7 +158,7 @@ executable contract. Explain later guidance in a new linked reply; do not overwr
 the published handoff. Scope/authority/acceptance changes require explicit authorization
 and an appropriate new contract.
 
-### Summary — Pi + Bonsai
+### Summary — Pi
 
 Pi writes the [summary template](src/codinator/templates/summary.md) for final delivery
 or an explicit stop, and reuses it for checkpoint stage summaries:
@@ -168,7 +185,7 @@ progress command from the checkpoint prompt. Arrays may be empty when nothing wa
 completed; only actually completed checks belong in `checks`. A progress receipt
 does not complete the attempt or prove its claims.
 
-### Help request — Pi + Bonsai
+### Help request — Pi
 
 Use the [help template](src/codinator/templates/help.md): all seven summary headings,
 plus these two required sections:
@@ -502,3 +519,39 @@ S03's existing paused/blocked records and native independent review remain histo
 evidence. These additions do not import an arbitrary handwritten acceptance or
 rewrite frozen manifests. Fake-agent/fault tests establish local protocol behavior;
 real Pi/S04 workflow improvement still needs a bounded pilot.
+
+## Passive output observations (recommended for new Pi tasks)
+
+New v2 Pi tasks with `handoff_protocol: 1` can use `checkpoint_mode: "observe"`
+and `checkpoint_seconds: 1800`. See [the example](examples/observation-task.json).
+Keep the process hard limit at `attempt_seconds: 5400` and publish the shared stage
+budget as usual. Omission preserves the frozen report-based behavior. Observation
+does not support `implementation: "external"`, or the legacy `checkpoint_format`,
+`first_checkpoint`, and `counterexamples` fields.
+
+`checkpoint_outputs` is optional: at most 16 distinct workspace-relative file paths.
+It can name existing project logs or progress files specified by the handoff. No
+directory paths, wildcards, dot components, protected paths or symlink traversal
+are allowed. The controller does not discover files or create progress producers.
+The handoff defines what output should exist and what behavior it evidences.
+
+At startup and each interval the controller records immutable attempt-bound
+observations, including UTC/elapsed time, source byte ranges, size changes and tool
+start/end counts with bounded active IDs. Busy tools do not delay sampling. RPC logs
+are referenced by metadata only; model dialogue is not analyzed or copied. Declared
+files are sampled at most 32 KiB each. Each sample has its own immutable fragment;
+sample hashes identify those bytes, not the whole source file. Replaced/truncated
+files, missing/unreadable sources, partial JSON, non-text and concurrent writes are
+explicitly unknown. Old output is distinguished by the startup baseline.
+
+Pi has no periodic report obligation. The observer sends no checkpoint steering
+request and imposes no five-minute response timeout. Silence, missing artifacts or
+partial output do not stop Pi. Cancellation, hard limits, final summary/evidence
+delivery and independent acceptance remain required. Controller evidence-write
+failure is an explicit error, not a successful observation. `status.observation`
+exposes the count, latest record and evidence path; corrupt or wrongly bound evidence
+fails explicitly. These records are unverified observations, never project verdicts.
+Main Codex assesses actual behavioral evidence and uses native `pause` when guidance
+is needed. After confirming tools stopped, it preserves Git state and publishes a
+linked corrective handoff under the remaining budget. No guidance model is launched
+by the observer, and historical task contracts are not migrated.
