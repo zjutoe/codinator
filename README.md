@@ -3,7 +3,7 @@
 [中文文档](README_CN.md)
 
 Codinator provides the handoff protocol and background transport between main Codex,
-Pi + Bonsai, and independent Codex review. Main Codex owns requirements, planning,
+Pi, and independent Codex review. Main Codex owns requirements, planning,
 handoffs and corrective guidance. Pi implements, runs project commands/tests and makes
 local Git commits. Independent Codex verifies the work and decides acceptance.
 
@@ -57,7 +57,6 @@ Guidance and independent review remain `gpt-6-astra / xhigh`; there is no silent
 The configured strata model reports `high`; requesting `xhigh` is rejected if Pi lowers it.
 See [the strata manifest example](examples/strata-task.json). Runtime identity is Pi's
 client report, not proof of server weights or model quality.
-Pi RPC attests client configuration, not the weights loaded by the remote server.
 
 Guidance and review require Codex named permission profiles. Their profile extends
 `:read-only` and grants only `/tmp` writes for fixtures and logs; the outer bubblewrap
@@ -159,7 +158,7 @@ executable contract. Explain later guidance in a new linked reply; do not overwr
 the published handoff. Scope/authority/acceptance changes require explicit authorization
 and an appropriate new contract.
 
-### Summary — Pi + Bonsai
+### Summary — Pi
 
 Pi writes the [summary template](src/codinator/templates/summary.md) for final delivery
 or an explicit stop, and reuses it for checkpoint stage summaries:
@@ -186,7 +185,7 @@ progress command from the checkpoint prompt. Arrays may be empty when nothing wa
 completed; only actually completed checks belong in `checks`. A progress receipt
 does not complete the attempt or prove its claims.
 
-### Help request — Pi + Bonsai
+### Help request — Pi
 
 Use the [help template](src/codinator/templates/help.md): all seven summary headings,
 plus these two required sections:

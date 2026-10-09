@@ -29,6 +29,9 @@ python3 -B validation/live_smoke.py --run --output-parent /path/to/writable-pare
 `integration_smoke.py` 已移除：其旧版快照和自动合并接口不再存在。历史验收记录仍保留。
 认证、私有配置、完整会话与任务运行数据均保存在仓外，分享时只导出所需脱敏摘要。
 
+本次模型选择改造的模拟检查、非作者审查和真实 Pi 工具探针记录见
+[Pi 模型选择验证（2026-10-09）](pi-model-selection-20261009.md)。探针不代表研究任务质量。
+
 ## 历史材料的边界
 
 本目录中的日期子目录、JSON 摘要及 stdout/stderr 是历史记录，包含已移除界面的测试名称和路径。
