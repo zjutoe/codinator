@@ -25,7 +25,18 @@ systemctl --user enable --now codinator.service
 `doctor` 只验证依赖和沙箱，不调用模型。`service` 只输出 unit，不代为安装或重启。
 已有服务仅在确认旧任务停止后升级；不得在活动实施期间换版本。
 生成 unit 时保留 PATH 和代理环境；Pi 子进程去掉代理并直连 Bonsai，Codex 审查与通知保留代理。
-实施固定为 `bonsai / bonsai2-27b / xhigh`，独立验收为 `gpt-6-astra / xhigh`，不静默更换模型。
+原生实施仍通过 Pi。任务 manifest 可指定模型身份：
+
+```json
+"pi": {"provider": "strata", "model": "qwen3.8-flash-next-iq3_s", "thinking": "xhigh"}
+```
+
+出现 `pi` 时三个字段均必填。发布前在 Pi 中配置准确的 provider 和模型 ID；地址和认证仍由 Pi 管理。
+`thinking` 支持 `off`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`。
+省略此字段仍使用 `bonsai / bonsai2-27b / xhigh`，不向旧冻结 manifest 补写默认值。
+外部实施任务不接受此字段。模型身份随契约冻结，在发送任务前核验，交付修复和仅重试验收沿用同一身份。
+更换模型须发布新契约并沿用实际剩余额度，不能重置预算。指导与独立验收仍用 `gpt-6-astra / xhigh`。
+参考 [strata manifest 示例](examples/strata-task.json)。运行身份是 Pi 的客户端报告，不证明服务端权重或模型质量。
 Pi 的客户端身份由 RPC 核验，不能证明远端服务实际加载的权重。
 
 指导与审查要求 Codex 支持命名权限配置：继承 `:read-only`，仅授予 `/tmp` 写入以支持

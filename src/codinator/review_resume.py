@@ -2,6 +2,7 @@
 import json
 
 from .files import Problem, file_info
+from .config import pi_settings
 from .delivery import selected_delivery, read_delivery
 from .handoff import enabled, verify_protocol
 
@@ -84,10 +85,12 @@ def checkpoint(store, task):
     if before != expected | {'commit': packet['git']['base_commit']}:
         raise Problem('Review submission base does not match the original handoff')
 
+    pi = pi_settings(manifest)
+
     def successful_pi(prefix=''):
         successful_process(prefix + 'pi', ('stdout.jsonl', 'stderr.txt'))
         identity = document(prefix + 'pi-runtime.json')
-        if (identity.get('provider'), identity.get('model'), identity.get('thinking')) != ('bonsai', 'bonsai2-27b', 'xhigh'):
+        if (identity.get('provider'), identity.get('model'), identity.get('thinking')) != (pi['provider'], pi['model'], pi['thinking']):
             raise Problem('Unexpected Pi runtime identity in review evidence')
         ack, settled, stop = False, False, None
         with (source / (prefix + 'pi/stdout.jsonl')).open() as stream:

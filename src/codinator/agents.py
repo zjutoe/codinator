@@ -4,6 +4,7 @@ from pathlib import Path
 import time
 
 from .checkpoints import Checkpoints, Closeout
+from .config import pi_settings
 from .files import Problem, file_info, write_json
 from .delivery import (prepare_contract, selected_delivery, message_binding, protocol_binding,
                        validate_message, _read, _json, DeliveryError)
@@ -15,7 +16,8 @@ from .sandbox import codex_home, pi_home
 
 class PiProtocol:
     def __init__(self, prompt, state_path, *, checkpoints=None, closeout=None,
-                 observer=None):
+                 observer=None, pi=None):
+        self.pi = pi_settings({'pi': pi} if pi is not None else {})
         self.prompt = prompt
         self.state_path = state_path
         self.prompt_sent = False
@@ -78,10 +80,10 @@ class PiProtocol:
                 if type(state) is not dict or type(state.get("model")) is not dict:
                     raise Problem("Pi state data and model must be objects")
                 model = state['model']
-                if model.get("provider") != "bonsai" or model.get("id") != "bonsai2-27b":
-                    raise Problem("Pi runtime provider/model does not match bonsai/bonsai2-27b")
-                if state.get("thinkingLevel") != "xhigh":
-                    raise Problem("Pi runtime thinking level does not match xhigh")
+                if model.get("provider") != self.pi['provider'] or model.get("id") != self.pi['model']:
+                    raise Problem(f"Pi runtime provider/model does not match {self.pi['provider']}/{self.pi['model']}")
+                if state.get("thinkingLevel") != self.pi['thinking']:
+                    raise Problem(f"Pi runtime thinking level does not match {self.pi['thinking']}")
                 if state.get("isStreaming") or state.get("pendingMessageCount", 0):
                     raise Problem("Pi is not idle at dispatch")
                 write_json(self.state_path, {"provider": model["provider"], "model": model["id"],
@@ -159,10 +161,11 @@ or background processes. Every edit and check must remain within the declared ta
 
 def _pi_worker(prompt, context, private, sandbox, process_options, root, *,
                delivery_instructions, allowed=(), readonly=(), checkpoints=None, closeout=None,
-               observer=None, git_write=False, pi_bin="pi"):
+               observer=None, git_write=False, pi_bin="pi", pi=None):
+    pi = pi_settings({'pi': pi} if pi is not None else {})
     config = pi_home(private / "pi")
     (context / "worker-prompt.txt").write_text(prompt)
-    argv = [pi_bin, "--mode", "rpc", "--provider", "bonsai", "--model", "bonsai2-27b", "--thinking", "xhigh",
+    argv = [pi_bin, "--mode", "rpc", "--provider", pi["provider"], "--model", pi["model"], "--thinking", pi["thinking"],
             "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--offline",
             "--append-system-prompt", delivery_instructions,
             "--session-dir", str(config / "sessions")]
@@ -179,7 +182,7 @@ def _pi_worker(prompt, context, private, sandbox, process_options, root, *,
     run_process(sandbox.wrap(argv, root, allowed, writable, readonly=readonly),
                 cwd=root, env=env, out=context / "pi",
                 protocol=PiProtocol(prompt, context / "pi-runtime.json", checkpoints=checkpoints,
-                                    closeout=closeout, observer=observer), **process_options)
+                                    closeout=closeout, observer=observer, pi=pi), **process_options)
 
 
 def _document_instructions(task, context, task_dir, kinds, author):
@@ -290,7 +293,8 @@ Follow the Codinator delivery, Git and checkpoint rules in the appended system i
     _pi_worker(prompt, attempt_dir, private, sandbox, process_options, root,
                delivery_instructions=instructions, allowed=manifest['allowed_paths'],
                readonly=[attempt_dir.parent], checkpoints=checkpoints, closeout=closeout,
-               observer=observer, git_write=manifest['version'] == 2, pi_bin=pi_bin)
+               observer=observer, git_write=manifest['version'] == 2, pi_bin=pi_bin,
+               pi=pi_settings(manifest))
 
 
 def repair_delivery(task, attempt_dir, private, sandbox, process_options, error, pi_bin="pi"):
@@ -326,7 +330,8 @@ Published handoff: {attempt_dir.parent / 'handoff.md'}
 Follow the delivery repair rules and bound command in the appended system instructions.
 """
     _pi_worker(prompt, context, private, sandbox, process_options, Path(task['manifest']['workspace']),
-               delivery_instructions=instructions, readonly=[attempt_dir.parent], pi_bin=pi_bin)
+               delivery_instructions=instructions, readonly=[attempt_dir.parent], pi_bin=pi_bin,
+               pi=pi_settings(task['manifest']))
 
 
 ISSUE_FIELDS = ("id", "priority", "path", "description", "required_change", "validation")

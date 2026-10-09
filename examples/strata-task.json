@@ -1,0 +1,49 @@
+{
+  "version": 2,
+  "handoff_protocol": 1,
+  "id": "STRATA-DEMO",
+  "workspace": "/absolute/path/to/independent-pilot-checkout",
+  "git": {
+    "branch": "demo-guidance",
+    "base_commit": "0000000000000000000000000000000000000000"
+  },
+  "handoff": "handoff.md",
+  "allowed_paths": [
+    "add.py",
+    "tests/test_add.py"
+  ],
+  "checks": [
+    {
+      "name": "unit",
+      "argv": [
+        "python3",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-v"
+      ],
+      "timeout_seconds": 120
+    }
+  ],
+  "max_rounds": 4,
+  "max_seconds": 57600,
+  "attempt_seconds": 5400,
+  "checkpoint_seconds": 1800,
+  "checkpoint_mode": "observe",
+  "checkpoint_outputs": [
+    "add.py"
+  ],
+  "stage": {
+    "id": "STRATA-DEMO",
+    "max_seconds": 57600,
+    "max_rounds": 4
+  },
+  "pi": {
+    "provider": "strata",
+    "model": "qwen3.8-flash-next-iq3_s",
+    "thinking": "xhigh"
+  }
+}

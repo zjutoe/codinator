@@ -340,7 +340,9 @@ if '--mode' in sys.argv:
         command = json.loads(line)
         if command['type'] == 'get_state':
             emit({'type': 'response', 'id': 'state', 'success': True, 'data': {
-                'model': {'provider': 'bonsai', 'id': 'bonsai2-27b'}, 'thinkingLevel': 'xhigh',
+                'model': {'provider': sys.argv[sys.argv.index('--provider') + 1],
+                          'id': sys.argv[sys.argv.index('--model') + 1]},
+                'thinkingLevel': sys.argv[sys.argv.index('--thinking') + 1],
                 'isStreaming': False, 'pendingMessageCount': 0, 'sessionId': 'fake'}})
         elif command['type'] == 'prompt':
             emit({'type': 'response', 'id': 'prompt', 'success': True})

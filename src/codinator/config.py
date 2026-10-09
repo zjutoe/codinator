@@ -7,6 +7,27 @@ from .files import Problem, under
 from .handoff import validate_document
 
 
+def pi_settings(manifest):
+    """Resolve the frozen native Pi identity without rewriting legacy manifests."""
+    if 'pi' not in manifest:
+        return {'provider': 'bonsai', 'model': 'bonsai2-27b', 'thinking': 'xhigh'}
+    spec = manifest['pi']
+    if manifest.get('implementation') == 'external':
+        raise Problem('pi settings require native Pi implementation')
+    if type(spec) is not dict or set(spec) != {'provider', 'model', 'thinking'}:
+        raise Problem('pi requires exactly provider, model and thinking')
+    for key in ('provider', 'model'):
+        value = spec[key]
+        if (type(value) is not str or not value or value.startswith('-')
+                or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in value)):
+            raise Problem(f'pi.{key} must be a nonempty identity without whitespace or control characters')
+    if ':' in spec['model']:
+        raise Problem('pi.model must be a model ID without a thinking shorthand')
+    if spec['thinking'] not in ('off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'):
+        raise Problem('pi.thinking must be off, minimal, low, medium, high, xhigh or max')
+    return dict(spec)
+
+
 def positive(value, name):
     if type(value) is not int or value <= 0:
         raise Problem(f"{name} must be a positive integer")
@@ -40,11 +61,12 @@ def load_manifest(path):
                     "max_rounds", "max_seconds", "attempt_seconds", "checkpoint_seconds", "deadline_utc",
                     "notify_thread", "integration", "git", "handoff_protocol",
                     "checkpoint_format", "first_checkpoint", "counterexamples", "checkpoint_mode",
-                    "checkpoint_outputs", "stage", "implementation"}
+                    "checkpoint_outputs", "stage", "implementation", "pi"}
     if type(raw) is not dict or set(raw) - allowed_keys:
         raise Problem("Unknown manifest field(s)")
     if type(raw.get("version")) is not int or raw["version"] != 2:
         raise Problem("New publication requires manifest version 2; version 1 tasks are read-only history")
+    pi_settings(raw)
     if 'handoff_protocol' in raw:
         if type(raw['handoff_protocol']) is not int or raw['handoff_protocol'] != 1:
             raise Problem('handoff_protocol requires version 2 and integer protocol version 1')

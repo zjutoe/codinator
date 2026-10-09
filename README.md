@@ -39,8 +39,23 @@ systemctl --user enable --now codinator.service
 `service` prints a unit; it does not install or restart it. Upgrade only after old
 agent processes have stopped. Generated units preserve PATH and proxy settings.
 Pi removes proxy variables and connects directly; Codex review/notifications retain them.
-Implementation is fixed to `bonsai / bonsai2-27b / xhigh`; guidance and independent
-review use `gpt-6-astra / xhigh`. These choices are currently fixed in the implementation.
+Native implementation uses Pi. Select its identity with the optional manifest field:
+
+```json
+"pi": {"provider": "strata", "model": "qwen3.8-flash-next-iq3_s", "thinking": "xhigh"}
+```
+
+All three keys are required when `pi` is present. Configure the exact provider and model ID
+in Pi before publication; the endpoint and credentials remain in Pi's configuration.
+`thinking` accepts `off`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`.
+An omitted field keeps `bonsai / bonsai2-27b / xhigh`, including frozen legacy tasks;
+no defaults are inserted into their manifests. The field is not valid for external implementation.
+The selected identity is frozen with the task and checked before sending a prompt.
+Delivery repair and review-only retries use the same identity. Changing models requires
+a new task contract with the actual remaining allowance, not a budget reset.
+Guidance and independent review remain `gpt-6-astra / xhigh`; there is no silent model switch.
+See [the strata manifest example](examples/strata-task.json). Runtime identity is Pi's
+client report, not proof of server weights or model quality.
 Pi RPC attests client configuration, not the weights loaded by the remote server.
 
 Guidance and review require Codex named permission profiles. Their profile extends
