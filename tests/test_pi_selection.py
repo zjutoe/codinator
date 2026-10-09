@@ -70,7 +70,9 @@ class PiIdentityTests(unittest.TestCase):
 class SelectedPiLifecycleTests(unittest.TestCase):
     def setUp(self):
         test_engine.EngineTests.setUp(self)
-        (self.workspace / 'handoff.md').write_text(template('handoff'))
+        (self.workspace / 'handoff.md').write_text(template('handoff').replace(
+            'Describe the concrete problem and expected outcome.',
+            'Implement product.py with VALUE=42; commit before tests.'))
         self.git('add', 'handoff.md')
         self.git('commit', '-qm', 'Publish selected model fixture contract')
         self.initial = self.git('rev-parse', 'HEAD')
